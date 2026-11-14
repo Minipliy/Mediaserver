@@ -3,6 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 for script in scripts/*.sh; do sh -n "$script"; done
 python3 scripts/check-vps-regression.py
+python3 scripts/check-pi-einrichten.py
 python3 scripts/check-untertitel.py
 python3 scripts/check-musik-update.py
 python3 scripts/check-wlan-waechter.py

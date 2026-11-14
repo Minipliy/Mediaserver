@@ -11,8 +11,15 @@
 set -eu
 
 REPO=${MINIPLY_REPO:-Minipliy/Mediaserver}
+# Nur für scripts/check-pi-einrichten.py: alle Dateien unter einem Testordner.
+ROOT=${MINIPLY_TEST_ROOT:-}
 MEDIA=/srv/media
 ENV_FILE=/etc/miniply/server.env
+UNIT=/etc/systemd/system/miniply.service
+BINARY=/usr/local/bin/miniply-server
+# Beim ersten Start liest der Server die ganze Bibliothek ein, bevor er antwortet.
+WAIT_SECONDS=${MINIPLY_WAIT_SECONDS:-900}
+MARKER="# Eingerichtet mit scripts/pi-einrichten.sh"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\nFehler: %s\n' "$*" >&2; exit 1; }
@@ -27,8 +34,7 @@ esac
 
 # Eine von Hand eingerichtete Installation (zum Beispiel mit WireGuard und VPS
 # nach docs/SETUP.md) nicht überschreiben.
-MARKER="# Eingerichtet mit scripts/pi-einrichten.sh"
-if [ -f /etc/systemd/system/miniply.service ] && ! grep -qF "$MARKER" /etc/systemd/system/miniply.service; then
+if [ -f "$ROOT$UNIT" ] && ! grep -qF "$MARKER" "$ROOT$UNIT"; then
     fail "Hier läuft schon eine eigene Mediaserver-Einrichtung. Dieses Skript ändert sie nicht; aktualisiere sie wie bisher (z. B. mit scripts/update-pi.sh)."
 fi
 
@@ -44,30 +50,32 @@ curl -fL --retry 3 --progress-bar -o "$download" \
     || fail "Download fehlgeschlagen. Ist der Pi mit dem Internet verbunden?"
 [ -s "$download" ] || fail "Die heruntergeladene Datei ist leer."
 updating=false
-[ -f /usr/local/bin/miniply-server ] && updating=true
-install -m 0755 "$download" /usr/local/bin/miniply-server
+if [ -f "$ROOT$BINARY" ]; then updating=true; fi
+mkdir -p "$(dirname "$ROOT$BINARY")"
+install -m 0755 "$download" "$ROOT$BINARY"
 
 say "3/5 Benutzer und Medienordner anlegen …"
 getent group media >/dev/null || groupadd --system media
 id miniply >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/lib/miniply \
     --shell /usr/sbin/nologin --gid media miniply
-mkdir -p "$MEDIA/Musik" "$MEDIA/Filme" "$MEDIA/Serien" "$MEDIA/Dokumente"
-if ! mountpoint -q "$MEDIA"; then
+mkdir -p "$ROOT$MEDIA/Musik" "$ROOT$MEDIA/Filme" "$ROOT$MEDIA/Serien" "$ROOT$MEDIA/Dokumente"
+if ! mountpoint -q "$ROOT$MEDIA"; then
     printf '%s\n' "Hinweis: Unter $MEDIA ist keine eigene Festplatte eingebunden. Deine Medien landen" \
         "dann auf der SD-Karte. Für eine Festplatte siehe Schritt 4 der Anleitung."
 fi
 # Der Dienst darf lesen und (für Hochladen und Löschen in der App) schreiben;
 # neue Ordner erben die Gruppe.
-chgrp -R media "$MEDIA"
-chmod -R g+rwX "$MEDIA"
-find "$MEDIA" -type d -exec chmod g+s {} +
+chgrp -R media "$ROOT$MEDIA"
+chmod -R g+rwX "$ROOT$MEDIA"
+find "$ROOT$MEDIA" -type d -exec chmod g+s {} +
 
 say "4/5 Einstellungen und Dienst einrichten …"
-mkdir -p /etc/miniply
-if [ ! -f "$ENV_FILE" ]; then
+mkdir -p "$(dirname "$ROOT$ENV_FILE")" "$(dirname "$ROOT$UNIT")"
+if [ ! -f "$ROOT$ENV_FILE" ]; then
     token=$(openssl rand -hex 32)
+    old_umask=$(umask)
     umask 077
-    cat > "$ENV_FILE" <<CONF
+    cat > "$ROOT$ENV_FILE" <<CONF
 # Mediaserver-Einstellungen. Nach einer Änderung: sudo systemctl restart miniply
 # Das Token ist dein Passwort für App und Browser. Nicht weitergeben.
 MINIPLY_TOKEN=$token
@@ -85,10 +93,10 @@ MINIPLY_DELETES=1
 MINIPLY_THUMBNAILS=1
 RUST_LOG=miniply_server=info
 CONF
-    umask 022
+    umask "$old_umask"
 fi
-chmod 600 "$ENV_FILE"
-cat > /etc/systemd/system/miniply.service <<UNIT
+chmod 600 "$ROOT$ENV_FILE"
+cat > "$ROOT$UNIT" <<UNIT
 $MARKER
 [Unit]
 Description=Mediaserver
@@ -101,7 +109,7 @@ Type=simple
 User=miniply
 Group=media
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/local/bin/miniply-server
+ExecStart=$BINARY
 WorkingDirectory=/var/lib/miniply
 StateDirectory=miniply
 StateDirectoryMode=0750
@@ -129,15 +137,24 @@ systemctl daemon-reload
 systemctl enable miniply >/dev/null 2>&1
 systemctl restart miniply
 
-say "5/5 Prüfen, ob der Server antwortet …"
-ok=false
-for _ in $(seq 1 30); do
-    if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then ok=true; break; fi
+say "5/5 Warten, bis der Server antwortet …"
+# Eine große Sammlung einzulesen dauert beim ersten Start einige Minuten.
+# Startet der Dienst dagegen neu (Absturz), ist das ein echter Fehler.
+waited=0
+until curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; do
+    restarts=$(systemctl show -p NRestarts --value miniply 2>/dev/null || echo 0)
+    if [ "${restarts:-0}" -gt 0 ] || systemctl is-failed --quiet miniply; then
+        fail "Der Server startet nicht. Details: sudo journalctl -u miniply -n 50"
+    fi
+    [ "$waited" -lt "$WAIT_SECONDS" ] || fail "Der Server antwortet nach $WAIT_SECONDS Sekunden noch nicht. Details: sudo journalctl -u miniply -n 50"
+    if [ "$waited" -eq 10 ]; then
+        echo "Der Server liest deine Bibliothek ein. Bei vielen Dateien kann das ein paar Minuten dauern …"
+    fi
     sleep 1
+    waited=$((waited + 1))
 done
-$ok || fail "Der Server startet nicht. Details: sudo journalctl -u miniply -n 50"
 
-token=$(sed -n 's/^MINIPLY_TOKEN=//p' "$ENV_FILE")
+token=$(sed -n 's/^MINIPLY_TOKEN=//p' "$ROOT$ENV_FILE")
 if $updating; then
     say "Fertig: Mediaserver ist aktualisiert und läuft."
 else

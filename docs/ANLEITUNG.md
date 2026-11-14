@@ -56,19 +56,20 @@ Der Pi braucht, wie jeder Computer, ein Betriebssystem. Wir nehmen **Raspberry P
 
 1. Lade auf deinem Computer den **Raspberry Pi Imager** herunter und installiere ihn: <https://www.raspberrypi.com/software/>
 2. Stecke die microSD-Karte in deinen Computer.
-3. Öffne den Raspberry Pi Imager.
-4. **Raspberry-Pi-Modell wählen:** dein Modell, zum Beispiel „Raspberry Pi 5“.
-5. **Betriebssystem wählen:** „Raspberry Pi OS (other)“ → **„Raspberry Pi OS Lite (64-bit)“**.
-   Wichtig: **64-bit**. Die 32-Bit-Version funktioniert nicht.
-6. **SD-Karte wählen:** deine microSD-Karte. Achtung, alles darauf wird gelöscht.
-7. Klicke auf **Weiter**. Der Imager fragt, ob du die **Einstellungen bearbeiten** möchtest: **Ja, Einstellungen bearbeiten**.
-8. Im Reiter **Allgemein**:
-   - **Hostname:** `mediaserver`
-   - **Benutzername und Passwort festlegen:** Denk dir einen Namen (zum Beispiel deinen Vornamen, klein geschrieben) und ein gutes Passwort aus. **Schreib dir beides auf.**
-   - **WLAN einrichten:** nur, wenn du kein Netzwerkkabel nutzt. Dann Name und Passwort deines WLANs eintragen.
-   - **Spracheinstellungen:** Zeitzone `Europe/Berlin`, Tastatur `de`.
-9. Im Reiter **Dienste**: **SSH aktivieren** anhaken und **Passwort zur Authentifizierung verwenden** wählen.
-10. **Speichern**, dann **Ja**. Der Imager schreibt die Karte. Das dauert ein paar Minuten.
+3. Öffne den Raspberry Pi Imager. Er führt dich Seite für Seite durch die Einrichtung:
+   1. **Gerät:** dein Modell, zum Beispiel „Raspberry Pi 5“.
+   2. **Betriebssystem:** „Raspberry Pi OS (other)“ → **„Raspberry Pi OS Lite (64-bit)“**.
+      Wichtig: **64-bit**. Die 32-Bit-Version funktioniert nicht.
+   3. **Speicher:** deine microSD-Karte. Achtung, alles darauf wird gelöscht.
+4. Danach fragt der Imager nach den **Anpassungen**. Trage ein:
+   - **Hostname** (Name des Geräts im Netzwerk): `mediaserver`
+   - **Lokalisierung:** Hauptstadt „Berlin“ (oder deine). Damit stimmen Zeitzone, Tastatur und WLAN-Land.
+   - **Benutzer:** Denk dir einen Benutzernamen aus (zum Beispiel deinen Vornamen, klein geschrieben, ohne Leerzeichen) und ein gutes Passwort. **Schreib dir beides auf.**
+   - **WLAN:** nur, wenn du kein Netzwerkkabel nutzt. Dann Name und Passwort deines WLANs eintragen.
+   - **Fernzugriff (SSH):** **einschalten** und **Passwort-Anmeldung** wählen. Das Angebot „Raspberry Pi Connect“ brauchst du nicht.
+5. Prüfe die **Zusammenfassung** und starte das **Schreiben**. Das dauert ein paar Minuten. Danach kannst du die Karte entnehmen.
+
+> Ältere Versionen des Imagers zeigen statt der einzelnen Seiten ein Fenster „Einstellungen bearbeiten“ mit Reitern. Dort findest du dieselben Angaben; SSH steht im Reiter „Dienste“.
 
 ## Schritt 2: Den Pi anschließen und starten
 
@@ -112,7 +113,7 @@ Der Pi braucht, wie jeder Computer, ein Betriebssystem. Wir nehmen **Raspberry P
 3. Sorge dafür, dass der Pi die Festplatte bei jedem Start einbindet. Kopiere diese **vier Zeilen auf einmal**:
    ```
    sudo mkdir -p /srv/media
-   echo 'LABEL=medien /srv/media ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+   grep -q 'LABEL=medien' /etc/fstab || echo 'LABEL=medien /srv/media ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
    sudo systemctl daemon-reload
    sudo mount -a
    ```
@@ -122,6 +123,8 @@ Der Pi braucht, wie jeder Computer, ein Betriebssystem. Wir nehmen **Raspberry P
    ```
    Hier sollte jetzt die Größe deiner Festplatte stehen.
 
+> **Festplatte später nachgerüstet?** Dann nach diesem Schritt einfach Schritt 5 noch einmal ausführen, damit der Server auf der neuen Platte schreiben darf. Dateien, die vorher auf der SD-Karte unter `/srv/media` lagen, sind nach dem Einbinden nicht mehr zu sehen; lade sie danach erneut hoch.
+
 ## Schritt 5: Mediaserver installieren
 
 Jetzt kommt der wichtigste Schritt, und er ist ganz einfach: **ein einziger Befehl**. Er lädt das Programm herunter, richtet alles ein und startet den Server.
@@ -130,7 +133,7 @@ Jetzt kommt der wichtigste Schritt, und er ist ganz einfach: **ein einziger Befe
 curl -fsSL https://raw.githubusercontent.com/Minipliy/Mediaserver/main/scripts/pi-einrichten.sh | sudo sh
 ```
 
-Das dauert ein paar Minuten. Am Ende steht:
+Das dauert ein paar Minuten, beim ersten Mal wegen der nötigen Programme auch zehn Minuten oder länger. Am Ende steht:
 
 ```
 Fertig: Mediaserver läuft.
