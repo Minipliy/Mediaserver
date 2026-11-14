@@ -1,0 +1,12 @@
+# Einmal am Tag, damit YouTube-Änderungen meist gar nicht erst auffallen.
+[Unit]
+Description=Daily update of yt-dlp and Deno
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=2h
+Persistent=true
+Unit=miniply-music-update.service
+
+[Install]
+WantedBy=timers.target

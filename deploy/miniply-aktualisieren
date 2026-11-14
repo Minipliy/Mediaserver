@@ -1,0 +1,100 @@
+#!/usr/bin/python3 -I
+"""Spielt eine neue Version des Servers und seiner Skripte ein. Läuft als root über sudo
+ohne Passwort (siehe miniply-aktualisieren.sudoers), darum darf es nur genau das:
+
+- nur diese vier Dateien aus /home/mediaserver/miniply-neu, nur normale Dateien von mediaserver,
+- keine Systemdienst-Dateien und nichts, was als root läuft (der Server und die Skripte
+  laufen als Benutzer miniply),
+- Server und Musik-Dienst neu starten; antwortet der neue Server nicht, kommt der alte zurück.
+
+Eingerichtet von scripts/setup-ohne-passwort.sh, aufgerufen von scripts/update-pi.sh.
+"""
+import os
+import pwd
+import shutil
+import stat
+import subprocess
+import sys
+import time
+import urllib.request
+
+QUELLE = "/home/mediaserver/miniply-neu"
+BESITZER = "mediaserver"
+SERVER = "/usr/local/bin/miniply-server"
+DATEIEN = {
+    "miniply-server": SERVER,
+    "prepare-media.py": "/usr/local/lib/miniply/prepare-media.py",
+    "prepare-hls.py": "/usr/local/lib/miniply/prepare-hls.py",
+    "musik-suchen.py": "/usr/local/lib/miniply/musik-suchen.py",
+}
+SICHERUNG = "/var/backups/miniply/miniply-server.previous"
+GESUND = "http://10.77.0.2:8080/healthz"
+
+
+def lesen(name, besitzer):
+    """Inhalt der Datei oder None. Folgt keinem Link und nimmt nur Dateien von mediaserver,
+    damit sich so keine fremde Datei an einen lesbaren Ort kopieren lässt."""
+    try:
+        fd = os.open(os.path.join(QUELLE, name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as datei:
+        info = os.fstat(datei.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != besitzer or info.st_nlink != 1:
+            sys.exit(f"{name}: keine normale Datei von {BESITZER}, nichts eingespielt.")
+        return datei.read()
+
+
+def einspielen(inhalt, ziel):
+    zwischen = ziel + ".neu"
+    with open(zwischen, "wb") as datei:
+        datei.write(inhalt)
+    os.chown(zwischen, 0, 0)
+    os.chmod(zwischen, 0o755)
+    os.replace(zwischen, ziel)
+
+
+def antwortet():
+    for _ in range(15):
+        time.sleep(2)
+        try:
+            with urllib.request.urlopen(GESUND, timeout=3) as antwort:
+                if antwort.status == 200:
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def main():
+    if len(sys.argv) > 1:
+        sys.exit("Ohne Argumente aufrufen.")
+    besitzer = pwd.getpwnam(BESITZER).pw_uid
+    neu = {name: lesen(name, besitzer) for name in DATEIEN}
+    neu = {name: inhalt for name, inhalt in neu.items() if inhalt}
+    if not neu:
+        sys.exit(f"In {QUELLE} liegt nichts zum Einspielen.")
+    if "miniply-server" in neu:
+        os.makedirs(os.path.dirname(SICHERUNG), mode=0o700, exist_ok=True)
+        shutil.copy2(SERVER, SICHERUNG)
+    os.makedirs("/usr/local/lib/miniply", mode=0o755, exist_ok=True)
+    for name, inhalt in neu.items():
+        einspielen(inhalt, DATEIEN[name])
+        print(f"eingespielt: {name}")
+    subprocess.run(["systemctl", "restart", "miniply"], check=False)
+    subprocess.run(["systemctl", "try-restart", "miniply-music"], check=False)
+    if antwortet():
+        print("Der neue Server läuft.")
+        return 0
+    print("Der neue Server antwortet nicht.", file=sys.stderr)
+    subprocess.run(["journalctl", "-u", "miniply", "-n", "30", "--no-pager"], check=False)
+    if "miniply-server" in neu:
+        with open(SICHERUNG, "rb") as datei:
+            einspielen(datei.read(), SERVER)
+        subprocess.run(["systemctl", "restart", "miniply"], check=False)
+        print("Das vorherige Programm wurde zurückgespielt.", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

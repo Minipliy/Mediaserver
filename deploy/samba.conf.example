@@ -1,0 +1,30 @@
+# Merge with /etc/samba/smb.conf, do not append a second [global] blindly.
+# Example LAN: replace 192.168.178.0/24 with the actual home subnet.
+[global]
+    server role = standalone server
+    server min protocol = SMB3_00
+    map to guest = Never
+    interfaces = lo eth0 wlan0 wg0
+    bind interfaces only = yes
+    hosts allow = 127.0.0.1 192.168.178.0/24 10.77.0.1
+    hosts deny = ALL
+    disable netbios = yes
+    smb ports = 445
+
+[Medien]
+    path = /srv/media
+    # LAN: encryption only when the client asks for it (faster on a Pi).
+    # Remote access already runs through SSH and WireGuard.
+    smb encrypt = desired
+    browseable = yes
+    read only = no
+    guest ok = no
+    valid users = mediashare
+    force group = media
+    create mask = 0660
+    directory mask = 2770
+    vfs objects = fruit streams_xattr
+    fruit:metadata = stream
+    fruit:resource = file
+    follow symlinks = no
+    wide links = no

@@ -1,0 +1,11 @@
+# Holt das WLAN zurück, wenn es ausfällt. Einrichten: scripts/setup-wlan-waechter.sh
+[Unit]
+Description=Reconnect the Wi-Fi when neither router nor VPS answer
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/lib/miniply/wlan-waechter.sh
+RuntimeDirectory=miniply-wlan
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=4min
+MemoryMax=50M

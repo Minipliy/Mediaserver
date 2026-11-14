@@ -1,0 +1,25 @@
+# A new site block to merge into the EXISTING Caddyfile.
+# Confirmed domain: minipliy.net. Create the media A record before enabling.
+# Do not overwrite existing Caddy sites or global options.
+media.minipliy.net {
+	@media_api path /v1/* /stream/* /healthz
+	handle @media_api {
+		reverse_proxy 10.77.0.2:8080 {
+			transport http {
+				dial_timeout 5s
+				compression off
+			}
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Strict-Transport-Security "max-age=31536000"
+	}
+	# Playback URLs contain scoped secrets. Do NOT enable normal access logs
+	# for this site or in a frontend proxy that records query strings.
+	log_skip
+}

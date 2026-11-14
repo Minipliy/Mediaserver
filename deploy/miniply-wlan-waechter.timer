@@ -1,0 +1,12 @@
+# Etwa einmal pro Minute. Der erste Lauf wartet, bis das WLAN nach dem Start Zeit hatte.
+[Unit]
+Description=Check the Wi-Fi connection about once a minute
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=miniply-wlan-waechter.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+server/target/
+*.sqlite*
+.env
+.DS_Store
+.build/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.local
+media/
+*.key
+privatekey

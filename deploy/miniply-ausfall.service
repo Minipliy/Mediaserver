@@ -1,0 +1,19 @@
+# Push-Mitteilung an die Mediaserver-App bei einem Ausfall. Einrichten: scripts/setup-ausfall-warnung.sh
+[Unit]
+Description=Report when the media server or its forwarding stops answering
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=miniply-ausfall
+EnvironmentFile=/etc/miniply/ausfall.env
+LoadCredential=apns.p8:/etc/miniply/apns.p8
+ExecStart=/usr/bin/python3 /usr/local/lib/miniply/ausfall-waechter.py
+TimeoutStartSec=2min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=80M

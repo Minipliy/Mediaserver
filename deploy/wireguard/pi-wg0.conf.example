@@ -1,0 +1,10 @@
+# /etc/wireguard/wg0.conf on the Pi (0600, root).
+[Interface]
+Address = 10.77.0.2/30
+PrivateKey = REPLACE_WITH_PI_PRIVATE_KEY_LOCALLY
+
+[Peer]
+PublicKey = REPLACE_WITH_VPS_PUBLIC_KEY
+Endpoint = DEINE-VPS-IP:51820
+AllowedIPs = 10.77.0.1/32
+PersistentKeepalive = 25

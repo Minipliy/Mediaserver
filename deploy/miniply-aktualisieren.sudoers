@@ -1,0 +1,4 @@
+# Erlaubt mediaserver genau einen Befehl als root ohne Passwort: das Einspielen einer neuen
+# Server-Version (ohne Argumente). Alles andere fragt weiter nach dem Passwort.
+# Eingerichtet von scripts/setup-ohne-passwort.sh. Entfernen: sudo rm /etc/sudoers.d/miniply-aktualisieren
+mediaserver ALL=(root) NOPASSWD: /usr/local/sbin/miniply-aktualisieren ""

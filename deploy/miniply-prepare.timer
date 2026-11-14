@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically prepare newly copied Mediaserver files
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=miniply-prepare.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,30 @@
+# Aktualisiert yt-dlp und Deno. Einrichten: scripts/setup-musik-dienst.sh
+# Gestartet von miniply-music-update.timer (täglich) und miniply-music-update.path
+# (wenn der Musik-Dienst nichts mehr laden konnte).
+[Unit]
+Description=Update yt-dlp and Deno for Mediaserver music requests
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/lib/miniply/musik-werkzeuge-aktualisieren.sh
+# Auch nach einem Fehler weg, sonst startet die .path-Einheit den Dienst immer wieder.
+ExecStopPost=/bin/rm -f /var/lib/miniply/music-jobs/update-wanted
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/usr/local/lib/miniply/tools /var/lib/miniply/music-jobs
+MemoryMax=400M

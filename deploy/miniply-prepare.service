@@ -1,0 +1,31 @@
+[Unit]
+Description=Prepare iPhone playback copies for Mediaserver
+RequiresMountsFor=/srv/media
+AssertPathIsMountPoint=/srv/media
+
+[Service]
+Type=oneshot
+User=miniply
+Group=media
+ExecStartPre=/usr/bin/mountpoint -q /srv/media
+ExecStart=/usr/bin/python3 /usr/local/lib/miniply/prepare-media.py /srv/media --threads 1
+UMask=0027
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=infinity
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/srv/media
+ReadWritePaths=/srv/media/.miniply-playback
+MemoryMax=512M
+TasksMax=32

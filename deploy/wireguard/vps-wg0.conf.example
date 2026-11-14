@@ -1,0 +1,10 @@
+# /etc/wireguard/wg0.conf on the VPS (0600, root).
+# Exchange ONLY the public keys between machines.
+[Interface]
+Address = 10.77.0.1/30
+ListenPort = 51820
+PrivateKey = REPLACE_WITH_VPS_PRIVATE_KEY_LOCALLY
+
+[Peer]
+PublicKey = REPLACE_WITH_PI_PUBLIC_KEY
+AllowedIPs = 10.77.0.2/32

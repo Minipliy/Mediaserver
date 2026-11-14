@@ -1,0 +1,45 @@
+# Lädt Musik, die in der App gesucht wurde. Einrichten: scripts/setup-musik-dienst.sh
+# Eigener Dienst, damit der API-Server selbst weiter nicht in die Medien schreibt.
+[Unit]
+Description=Mediaserver music requests
+After=network-online.target miniply.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/media
+AssertPathIsMountPoint=/mnt/media
+
+[Service]
+Type=simple
+User=miniply
+Group=media
+EnvironmentFile=/etc/miniply/server.env
+Environment=MUSIK_ZIEL=/mnt/media/Musik/
+Environment=PATH=/usr/local/lib/miniply/tools:/usr/bin:/bin
+Environment=HOME=/var/lib/miniply/music-jobs/.home
+Environment=DENO_DIR=/var/lib/miniply/music-jobs/.home/deno
+ExecStartPre=/usr/bin/mountpoint -q /mnt/media
+ExecStart=/usr/bin/python3 -I /usr/local/lib/miniply/musik-suchen.py --dienst /var/lib/miniply/music-jobs
+WorkingDirectory=/var/lib/miniply/music-jobs
+UMask=0007
+Nice=10
+IOSchedulingClass=idle
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/mnt/media /var/lib/miniply
+ReadWritePaths=/mnt/media/Musik /var/lib/miniply/music-jobs
+MemoryMax=600M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

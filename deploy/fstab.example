@@ -1,0 +1,5 @@
+# EXAMPLE ONLY: inspect lsblk -f and the actual SSD filesystem first.
+# Never format the SSD: it already contains the media.
+# For an existing ext4 partition:
+UUID=REPLACE_WITH_EXISTING_SSD_UUID /srv/media ext4 defaults,nofail,noatime,x-systemd.device-timeout=10s 0 2
+# This is intentionally not suitable for exFAT/NTFS without adjustments.

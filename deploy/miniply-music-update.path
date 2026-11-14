@@ -1,0 +1,10 @@
+# Der Musik-Dienst legt diese Datei an, wenn er keinen einzigen Song laden konnte.
+[Unit]
+Description=Update yt-dlp when music requests stop working
+
+[Path]
+PathExists=/var/lib/miniply/music-jobs/update-wanted
+Unit=miniply-music-update.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+[Unit]
+Description=Mediaserver media API
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+RequiresMountsFor=/srv/media
+AssertPathIsMountPoint=/srv/media
+
+[Service]
+Type=simple
+User=miniply
+Group=media
+EnvironmentFile=/etc/miniply/server.env
+ExecStartPre=/usr/bin/mountpoint -q /srv/media
+ExecStart=/usr/local/bin/miniply-server
+WorkingDirectory=/var/lib/miniply
+StateDirectory=miniply
+StateDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/srv/media
+ReadWritePaths=/var/lib/miniply
+MemoryMax=384M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

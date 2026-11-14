@@ -1,0 +1,87 @@
+# New public sites. Imported beside the existing Hyse site.
+(mediaserver_web_headers) {
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+    log_skip
+}
+
+minipliy.net, www.minipliy.net {
+    import mediaserver_web_headers
+    encode zstd gzip
+    root * /srv/minipliy-site
+    try_files {path}/index.html {path}
+    file_server
+    handle_errors 404 {
+        rewrite * /404.html
+        file_server
+    }
+}
+
+mediaserver.minipliy.net {
+    import mediaserver_web_headers
+    route {
+        # Review-only backend: separate account, state and original demo files.
+        @review_api path /v1/* /stream/* /healthz
+        handle @review_api {
+            request_body {
+                max_size 1MB
+            }
+            reverse_proxy 127.0.0.1:8091 {
+                transport http {
+                    compression off
+                }
+            }
+        }
+        handle {
+            encode zstd gzip
+            redir /privacy /datenschutz 308
+            redir /terms /agb 308
+            redir /nutzungsbedingungen /agb 308
+            redir /marketing / 308
+            root * /srv/mediaserver-site
+            try_files {path}/index.html {path}
+            file_server
+        }
+    }
+    handle_errors 404 {
+        root * /srv/mediaserver-site
+        rewrite * /404.html
+        file_server
+    }
+}
+
+# Private home media API: forwarded through WireGuard to the Raspberry Pi.
+# Nothing is stored on the VPS. Uploads from the app are streamed through.
+media.minipliy.net {
+    # Without the shared policy: the web player under /web/ brings its own,
+    # which allows its script. API answers are JSON and media.
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+    log_skip
+    @api path /v1/* /stream/* /healthz / /web /web/*
+    handle @api {
+        reverse_proxy 10.77.0.2:8080 {
+            transport http {
+                dial_timeout 5s
+                compression off
+            }
+        }
+    }
+    handle {
+        error 404
+    }
+    handle_errors 404 {
+        root * /srv/minipliy-errors
+        rewrite * /404.html
+        file_server
+    }
+}
