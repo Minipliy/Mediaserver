@@ -34,7 +34,8 @@ struct HomeView: View {
                 }
                 let videos = personal.continueWatching(in: model.mediaByID, series: model.seriesGroups, resume: model.resumeSeconds, limit: Self.shelfLimit)
                 let music = personal.collectionsToHear(playlists: model.playlists, albums: model.albums, limit: Self.shelfLimit)
-                if !isEmpty && videos.isEmpty && music.isEmpty {
+                let fresh = Array(model.newAlbumsFromFollowed.prefix(Self.shelfLimit))
+                if !isEmpty && videos.isEmpty && music.isEmpty && fresh.isEmpty {
                     ContentUnavailableView(String(localized: "Noch nichts gespielt"), systemImage: "play.circle",
                                            description: Text(String(localized: "Hier erscheinen deine zuletzt geschauten Videos und deine meistgehörte Musik.")))
                         .frame(maxWidth: .infinity, minHeight: 360)
@@ -42,6 +43,11 @@ struct HomeView: View {
                 if !videos.isEmpty {
                     field(String(localized: "Weiterschauen")) {
                         ForEach(videos) { ContinueCard(media: $0) }
+                    }
+                }
+                if !fresh.isEmpty {
+                    field(String(localized: "Neu von deinen Künstlern")) {
+                        ForEach(fresh) { tile(.album($0)) }
                     }
                 }
                 if !music.isEmpty {

@@ -363,8 +363,40 @@ struct PlaylistInput: Encodable {
     let mediaIds: [String]
 }
 
+extension PlaybackProgress {
+    /// Which position to start from: the one saved last, here (also offline) or
+    /// on another device. Positions saved before the app kept times stay as before:
+    /// one not yet sent wins, otherwise the server's.
+    static func resumePosition(local: Double, localAt: Double, localPending: Bool, remote: PlaybackProgress) -> Double {
+        let remoteAt = Double(remote.updatedAt ?? 0)
+        if remoteAt == 0 && remote.seconds == 0 { return local }
+        if localAt > 0 { return remoteAt >= localAt ? remote.seconds : local }
+        return localPending ? local : remote.seconds
+    }
+}
+
+struct FollowedArtist: Codable, Hashable, Identifiable {
+    let name: String
+    /// Unix seconds; what arrives after this counts as new.
+    let since: UInt64
+    var id: String { name.lowercased() }
+}
+
+struct FollowList: Codable {
+    let follows: [FollowedArtist]
+    /// The server's music service loads new releases (not only remembers the artists).
+    let loading: Bool
+}
+
+struct FollowChange: Encodable {
+    let name: String
+    let follow: Bool
+}
+
 struct PlaybackProgress: Codable {
     var seconds: Double
+    /// When the position was saved (Unix seconds); the newest one wins between devices.
+    var updatedAt: UInt64? = nil
 }
 
 struct StorageInfo: Decodable {

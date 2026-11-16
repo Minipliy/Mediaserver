@@ -362,13 +362,19 @@ async fn fetch(state: &AppState, url: Url) -> Option<Vec<Value>> {
 /// A catalog answer: from the copy while it is fresh, otherwise from Apple, and
 /// the old copy when Apple does not answer.
 pub async fn catalog(state: &AppState, url: Url) -> Option<Vec<Value>> {
+    let fresh = fresh_for(&url);
+    catalog_within(state, url, fresh).await
+}
+
+/// Like `catalog`, with a copy that may be at most `fresh` seconds old.
+pub async fn catalog_within(state: &AppState, url: Url, fresh: u64) -> Option<Vec<Value>> {
     let Some(cache) = state.music_cache.as_ref() else {
         return fetch(state, url).await;
     };
     let key = url.to_string();
     let kept = cache.response(key.clone()).await;
     if let Some((items, age)) = &kept
-        && *age < fresh_for(&url)
+        && *age < fresh
     {
         return Some(items.clone());
     }

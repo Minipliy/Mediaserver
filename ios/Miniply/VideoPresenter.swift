@@ -16,7 +16,8 @@ final class FullscreenPlayerController: AVPlayerViewController, AVPlayerViewCont
     /// "Nächste Folge" floating over the video
     /// (AVPlayerViewController's own contextual actions exist only on tvOS).
     private lazy var nextButton = makeActionButton(title: String(localized: "Nächste Folge"), symbol: "forward.end.fill") { [weak self] in
-        self?.playback?.next()
+        guard let playback = self?.playback else { return }
+        if playback.nextItem == nil && playback.nextSeason != nil { playback.startNextSeason() } else { playback.next() }
     }
     /// Only offered when the server found the same intro in every episode of the season.
     private lazy var introButton = makeActionButton(title: String(localized: "Intro überspringen"), symbol: "forward.fill") { [weak self] in
@@ -210,10 +211,14 @@ final class FullscreenPlayerController: AVPlayerViewController, AVPlayerViewCont
         updateSubtitle(at: time)
         updateSubtitleButton(for: current)
         let next = playback.nextItem
-        let showNext = next?.kind == "video" && duration > 60 && duration - time < 60
+        // After a season's last episode the same button starts the next season.
+        let season = next == nil ? playback.nextSeason : nil
+        let showNext = (next?.kind == "video" || season != nil) && duration > 60 && duration - time < 60
+        let title = season != nil ? String(localized: "Nächste Staffel") : String(localized: "Nächste Folge")
+        if nextButton.configuration?.title != title { nextButton.configuration?.title = title }
         // Until a second before its end, so a tap never lands after the intro is over.
         let showIntro = current.intro.map { time >= $0.start && time < $0.end - 1 } ?? false
-        let key = "\(showNext)\(showIntro)\(next?.id ?? "")"
+        let key = "\(showNext)\(showIntro)\(next?.id ?? season?.first.id ?? "")"
         if key != shownActions {
             shownActions = key
             UIView.animate(withDuration: 0.25) {

@@ -730,6 +730,214 @@
         }
       }
     },
+    "Nächste Staffel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nächste Staffel"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next Season"
+          }
+        }
+      }
+    },
+    "Gefolgt" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gefolgt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Following"
+          }
+        }
+      }
+    },
+    "artist.follow" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folgen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow"
+          }
+        }
+      }
+    },
+    "Neue Songs werden nicht mehr automatisch geladen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Songs werden nicht mehr automatisch geladen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New songs will no longer be loaded automatically"
+          }
+        }
+      }
+    },
+    "Neue Songs werden automatisch geladen und auf der Startseite gezeigt" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Songs werden automatisch geladen und auf der Startseite gezeigt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New songs are loaded automatically and shown on the home screen"
+          }
+        }
+      }
+    },
+    "Du folgst noch niemandem. Tippe auf der Seite eines Künstlers auf „Folgen“." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du folgst noch niemandem. Tippe auf der Seite eines Künstlers auf „Folgen“."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You are not following anyone yet. Tap “Follow” on an artist’s page."
+          }
+        }
+      }
+    },
+    "Seit %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seit %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Since %@"
+          }
+        }
+      }
+    },
+    "Veröffentlicht einer dieser Künstler etwas Neues, lädt dein Server es automatisch. Die App legt es auf dieses Gerät und zeigt es auf der Startseite." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Veröffentlicht einer dieser Künstler etwas Neues, lädt dein Server es automatisch. Die App legt es auf dieses Gerät und zeigt es auf der Startseite."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When one of these artists releases something new, your server loads it automatically. The app saves it on this device and shows it on the home screen."
+          }
+        }
+      }
+    },
+    "Auf deinem Server ist der Musik-Dienst nicht eingerichtet. Die Künstler werden gemerkt, neue Songs aber nicht geladen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf deinem Server ist der Musik-Dienst nicht eingerichtet. Die Künstler werden gemerkt, neue Songs aber nicht geladen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The music service is not set up on your server. The artists are remembered, but new songs are not loaded."
+          }
+        }
+      }
+    },
+    "Künstler, denen du folgst" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Künstler, denen du folgst"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Artists You Follow"
+          }
+        }
+      }
+    },
+    "Neu von deinen Künstlern" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neu von deinen Künstlern"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New from Your Artists"
+          }
+        }
+      }
+    },
+    "Folgen hat nicht geklappt: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folgen hat nicht geklappt: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not follow: %@"
+          }
+        }
+      }
+    },
+    "Entfolgen hat nicht geklappt: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entfolgen hat nicht geklappt: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not unfollow: %@"
+          }
+        }
+      }
+    },
     "Wiedergabe" : {
       "localizations" : {
         "de" : {

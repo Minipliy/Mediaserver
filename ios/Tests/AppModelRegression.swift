@@ -498,6 +498,66 @@ struct AppModelRegression {
         expect(DownloadManager.shared.cancelled == [episode.id], "An episode watched elsewhere stops loading; songs are left alone")
         UserDefaults.standard.removeObject(forKey: AutoDownloadSettings.removeWatchedKey)
 
+        // Episodes 20 and 21 were on this iPhone; 20 was watched on the iPad and left.
+        let (seriesModel, _, _) = makeModel()
+        func folge(_ number: Int) -> Media {
+            var media = Media(id: String(repeating: "\(number % 10)", count: 63) + "s", path: "Serien/Show/Season 1/Show S01E\(number).mp4",
+                              name: "Show S01E\(number).mp4", kind: "video", title: "Folge \(number)", artist: nil, album: nil,
+                              duration: 1300, bytes: 1, modified: 1)
+            media.seriesKey = "Serien/Show"; media.seasonFolder = "Season 1"; media.season = 1; media.episode = number
+            return media
+        }
+        let (f19, f20, f21, f22, f23) = (folge(19), folge(20), folge(21), folge(22), folge(23))
+        API.handler = { path, _ in
+            if path == "/v1/library" { return try JSONEncoder().encode(TestLibrary(items: [f19, f20, f21, f22, f23])) }
+            if path == "/v1/playlists" { return Data("[]".utf8) }
+            if path == "/v1/storage" { return Data(#"{"total_bytes":1,"available_bytes":1,"indexed_bytes":1,"file_count":5,"scan_errors":0}"#.utf8) }
+            throw URLError(.fileDoesNotExist)
+        }
+        await seriesModel.refresh()
+        seriesModel.downloading = [f21.id]
+        expect(seriesModel.nextEpisodes(after: [f20.id], watched: [f19.id, f20.id]).map(\.id) == [f22.id],
+               "A watched episode that left makes room for the next one after those still here")
+        expect(seriesModel.nextEpisodes(after: [f20.id], watched: [f19.id, f20.id, f22.id]).map(\.id) == [f23.id],
+               "Episodes already watched elsewhere are not loaded")
+        seriesModel.downloading = []
+        expect(seriesModel.nextEpisodes(after: [f23.id], watched: [f23.id]).isEmpty, "After the last episode nothing follows")
+
+        // The newest position wins, wherever it was saved.
+        let iPad = PlaybackProgress(seconds: 1200, updatedAt: 2_000)
+        expect(PlaybackProgress.resumePosition(local: 840, localAt: 1_000, localPending: true, remote: iPad) == 1200,
+               "A later position from another device beats an older one on this iPhone")
+        expect(PlaybackProgress.resumePosition(local: 840, localAt: 3_000, localPending: true, remote: iPad) == 840,
+               "A position saved offline later beats an older one on the server")
+        expect(PlaybackProgress.resumePosition(local: 840, localAt: 0, localPending: true, remote: PlaybackProgress(seconds: 660)) == 840,
+               "Without times, a position not yet sent still wins")
+        expect(PlaybackProgress.resumePosition(local: 840, localAt: 900, localPending: false, remote: PlaybackProgress(seconds: 0, updatedAt: 0)) == 840,
+               "Nothing on the server keeps the position on this iPhone")
+
+        // New songs of a followed artist.
+        let (followModel, _, _) = makeModel()
+        var neu = track("n"); neu.added = 5_000
+        var alt = track("o"); alt.added = 1_000
+        let follow = FollowList(follows: [FollowedArtist(name: "Ada", since: 4_000)], loading: true)
+        API.handler = { path, _ in
+            if path == "/v1/library" {
+                var a = neu; var b = alt
+                a = Media(id: a.id, path: a.path, name: a.name, kind: "audio", title: "Neu", artist: "ADA", album: "Eins", duration: nil, bytes: 1, modified: 1)
+                a.added = 5_000
+                b = Media(id: b.id, path: b.path, name: b.name, kind: "audio", title: "Alt", artist: "Ada", album: "Zwei", duration: nil, bytes: 1, modified: 1)
+                b.added = 1_000
+                return try JSONEncoder().encode(TestLibrary(items: [a, b]))
+            }
+            if path == "/v1/playlists" { return Data("[]".utf8) }
+            if path == "/v1/storage" { return Data(#"{"total_bytes":1,"available_bytes":1,"indexed_bytes":1,"file_count":2,"scan_errors":0}"#.utf8) }
+            if path == "/v1/music/follows" { return try JSONEncoder().encode(follow) }
+            throw URLError(.fileDoesNotExist)
+        }
+        await followModel.refresh()
+        expect(followModel.followsSupported && followModel.isFollowing("ada"), "The followed artists come from the server")
+        expect(followModel.newFromFollowed.map(\.id) == [neu.id], "Only songs added after following count as new")
+        expect(followModel.newAlbumsFromFollowed.count == 1, "The start page shows the album with the new song")
+
         let (_, legacyDirectory, legacyConnection) = makeModel()
         try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
         try JSONEncoder().encode([first]).write(to: legacyDirectory.appendingPathComponent("library.json"))

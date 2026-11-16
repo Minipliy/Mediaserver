@@ -12,6 +12,7 @@ const state = {
   seriesById: new Map(), episodeInfo: new Map(), seriesInfo: new Map(), movieInfo: new Map(), albumInfo: new Map(), artistInfo: new Map(),
   watched: new Map(), lastPlayed: new Map(), cursor: 0, progress: new Map(),
   favorites: new Map(), plays: new Map(), ownPlays: new Map(), playlists: [], albumFavorite: new Map(),
+  follows: { supported: false, loading: false, list: [] },
 };
 const art = new Map();
 const $ = (id) => document.getElementById(id);
@@ -77,6 +78,7 @@ async function loadLibrary() {
     json("/v1/storage").catch(() => null), sync()]);
   state.meta = meta;
   state.storage = disk;
+  await loadFollows();
   state.playlists = Array.isArray(playlists) ? playlists : (playlists.playlists || []);
   state.items = items;
   state.byId = new Map(items.map((item) => [item.id, item]));
@@ -555,6 +557,8 @@ const views = {
       const music = collectionsToHear(4);
       const parts = [];
       if (list.length) parts.push(text("h3", "Weiterschauen"), el("div", "home-field", ...list.slice(0, 4).map(continueCard)));
+      const fresh = newAlbumsFromFollowed().slice(0, 4);
+      if (fresh.length) parts.push(text("h3", "Neu von deinen Künstlern"), el("div", "home-field", ...fresh.map(musicTile)));
       if (music.length) parts.push(text("h3", "Oft und zuletzt gehört"), el("div", "home-field", ...music.map(musicTile)));
       if (!parts.length) parts.push(emptyNote(state.items.length ? "Hier erscheinen deine zuletzt geschauten Videos und deine meistgehörte Musik." : "Kopiere Musik, Filme und Serien auf deinen Server. Sie erscheinen hier automatisch."));
       holder.replaceChildren(...parts);
@@ -630,6 +634,12 @@ const views = {
       text("p", "Bibliothek", "settings-head"),
       el("ul", "settings-list settings-group", linkRow("#musik/finden", "Musik finden"), linkRow("#hochladen", "Hochladen"), linkRow("#dateien", "SSD durchsuchen"),
         row("Titel · Alben", `${state.songs.length} · ${state.albums.length}`), row("Serien · Filme", `${state.series.length} · ${state.movies.length}`), row("Gesehen", `${seen} Folgen und Filme`)),
+      ...(state.follows.supported ? [text("p", "Künstler, denen du folgst", "settings-head"),
+        el("ul", "settings-list settings-group", ...(state.follows.list.length ? state.follows.list.map((f) => el("li", "",
+          link(`#musik/interpret/${encodeURIComponent(f.name)}`, f.name), button("Entfolgen", "plain-button", () => setFollowing(f.name, false))))
+          : [el("li", "", text("span", "Noch niemand. Tippe auf der Seite eines Künstlers auf „Folgen“.", "muted"))])),
+        text("p", state.follows.loading ? "Veröffentlicht einer dieser Künstler etwas Neues, lädt dein Server es automatisch und zeigt es auf der Startseite."
+          : "Auf deinem Server ist der Musik-Dienst nicht eingerichtet: Die Künstler werden gemerkt, neue Songs aber nicht geladen.", "settings-caption")] : []),
       text("p", "Wiedergabe", "settings-head"),
       el("ul", "settings-list settings-group", label("Lautstärke angleichen", normalize), label("Untertitel", subtitles)),
       text("p", "Gleicht unterschiedlich laute Songs an. Untertitel gibt es, wenn neben dem Video eine .srt-Datei liegt.", "settings-caption"),
@@ -913,6 +923,7 @@ function artistView(name) {
   const head = hero({ art: null, shape: "round", title: name, meta: [info?.genre, info?.short_description].filter(Boolean)[0] || `${songs.length} Titel`,
     actions: songs.length ? [playButton("Abspielen", () => playAudio(songs, 0)), shuffleButton(() => playAudio(shuffled(songs), 0))] : [] });
   head.firstChild.replaceWith(picture);
+  if (state.follows.supported) head.querySelector(".hero-text").insertBefore(followButton(name), head.querySelector(".actions"));
   const catalogHolder = el("div", "", ...librarySections(name, albums, songs));
   loadArtistCatalog(name).then((catalog) => {
     if (catalog && $("inhalt").contains(catalogHolder)) catalogHolder.replaceChildren(...catalogSections(catalog, name, albums));
@@ -1108,7 +1119,7 @@ function episodeRow(episode, entry, queue) {
   const mark = el("span", "still-mark", icon(watched ? "check" : "play"), episode.episode != null ? text("b", String(episode.episode)) : null);
   still.append(mark);
   const name = episodeTitle(episode, entry.name);
-  const facts = [episode.episode != null ? `Folge ${episode.episode}` : null, episode.info?.runtime ? `${episode.info.runtime} Min.` : minutes(episode.duration),
+  const facts = [episode.episode != null ? `Folge ${episode.episode}` : null, minutes(episode.duration) || (episode.info?.runtime ? `${episode.info.runtime} Min.` : null),
     episode.info?.airdate ? day(episode.info.airdate) : null].filter(Boolean).join(" · ");
   const started = !watched && episode.duration && p > 30;
   const play = el("button", "episode-play", still,
@@ -1485,6 +1496,13 @@ function setupAudio() {
 
 const video = { queue: [], index: -1, saveTimer: null, subtitleURLs: [], series: "", markedSeen: false };
 
+function nextSeasonOf(item) {
+  const entry = item.seriesId ? state.seriesById.get(item.seriesId) : null;
+  if (!entry) return null;
+  const at = entry.list.findIndex((season) => season.episodes.includes(item));
+  return at >= 0 && at + 1 < entry.list.length && entry.list[at + 1].episodes.length ? entry.list[at + 1] : null;
+}
+
 async function playVideo(queue, index, series = video.series, fromStart = false) {
   audio().pause();
   video.queue = queue; video.index = index; video.series = series; video.markedSeen = false;
@@ -1492,7 +1510,10 @@ async function playVideo(queue, index, series = video.series, fromStart = false)
   const element = $("video");
   const code = episodeCode(item);
   $("video-titel").textContent = series ? `${series} · ${code ? `${code} · ` : ""}${episodeTitle(item, series)}` : (item.info?.title || item.title);
-  $("naechste-folge").hidden = index + 1 >= queue.length;
+  // Nach der letzten Folge einer Staffel startet derselbe Knopf die nächste Staffel.
+  video.nextSeason = index + 1 >= queue.length ? nextSeasonOf(item) : null;
+  $("naechste-folge").textContent = video.nextSeason ? "Nächste Staffel" : "Nächste Folge";
+  $("naechste-folge").hidden = index + 1 >= queue.length && !video.nextSeason;
   $("video-ebene").hidden = false;
   document.body.style.overflow = "hidden";
   for (const track of element.querySelectorAll("track")) track.remove();
@@ -1556,7 +1577,11 @@ function closeVideo() {
 function setupVideo() {
   const element = $("video");
   $("video-schliessen").addEventListener("click", closeVideo);
-  $("naechste-folge").addEventListener("click", () => { saveVideoPosition(); playVideo(video.queue, video.index + 1); });
+  $("naechste-folge").addEventListener("click", () => {
+    saveVideoPosition();
+    if (video.index + 1 < video.queue.length) playVideo(video.queue, video.index + 1);
+    else if (video.nextSeason) playVideo(video.nextSeason.episodes, 0, video.series, true);
+  });
   element.addEventListener("pause", saveVideoPosition);
   $("intro").addEventListener("click", () => { const item = video.queue[video.index]; if (item?.intro) element.currentTime = item.intro.end; });
   element.addEventListener("timeupdate", () => {
@@ -1577,6 +1602,39 @@ function setupVideo() {
     if (video.index + 1 < video.queue.length) playVideo(video.queue, video.index + 1, video.series, true);
   });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("video-ebene").hidden && !document.fullscreenElement) closeVideo(); });
+}
+
+// MARK: Künstlern folgen
+
+/// Wie in der App: Der Server lädt Neues von diesen Künstlern selbst.
+async function loadFollows() {
+  try {
+    const answer = await json("/v1/music/follows");
+    state.follows = { supported: true, loading: answer.loading, list: answer.follows || [] };
+  } catch { state.follows = { supported: false, loading: false, list: [] }; }
+}
+const isFollowing = (name) => state.follows.list.some((f) => f.name.toLowerCase() === name.toLowerCase());
+async function setFollowing(name, on) {
+  try {
+    const answer = await (await send("/v1/music/follows", "POST", { name, follow: on })).json();
+    state.follows = { supported: true, loading: answer.loading, list: answer.follows || [] };
+    toast(on ? `Du folgst ${name}` : `Du folgst ${name} nicht mehr`);
+    render();
+  } catch (error) { toast(`Hat nicht geklappt: ${error.message}`); }
+}
+function followButton(name) {
+  const on = isFollowing(name);
+  const b = iconButton(on ? "check" : "plus", on ? "Gefolgt" : "Folgen", `secondary small follow${on ? " on" : ""}`, () => setFollowing(name, !on));
+  b.setAttribute("aria-pressed", String(on));
+  b.title = on ? "Neue Songs werden nicht mehr automatisch geladen" : "Neue Songs werden automatisch geladen und auf der Startseite gezeigt";
+  return b;
+}
+/// Alben mit Songs gefolgter Künstler, die nach dem Folgen dazukamen, die neuesten zuerst.
+function newAlbumsFromFollowed() {
+  if (!state.follows.list.length) return [];
+  const since = new Map(state.follows.list.map((f) => [f.name.toLowerCase(), f.since]));
+  const isNew = (t) => [t.artist, ...(t.featured || [])].some((a) => a && since.has(a.toLowerCase()) && (t.added || t.modified) >= since.get(a.toLowerCase()));
+  return state.albums.filter((a) => a.tracks.some(isNew)).sort((a, b) => b.added - a.added);
 }
 
 // MARK: Einstellungen im Browser

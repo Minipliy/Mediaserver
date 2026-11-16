@@ -300,6 +300,19 @@ struct ArtistDetailView: View {
                     if let subtitle = [info?.genre, info?.shortDescription].compactMap({ $0 }).first {
                         Text(subtitle).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
+                    if model.followsSupported && !model.isOffline {
+                        let following = model.isFollowing(name)
+                        Button { Task { await model.setFollowing(name, !following) } } label: {
+                            Label(following ? String(localized: "Gefolgt") : String(localized: "artist.follow", defaultValue: "Folgen"),
+                                  systemImage: following ? "checkmark" : "plus")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.mint)
+                        .controlSize(.small)
+                        .accessibilityHint(following ? String(localized: "Neue Songs werden nicht mehr automatisch geladen")
+                                                     : String(localized: "Neue Songs werden automatisch geladen und auf der Startseite gezeigt"))
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal)
@@ -346,6 +359,47 @@ struct ArtistDetailView: View {
         .fullScreenCover(isPresented: $showingImage) {
             if let imageID { LargeArtworkView(id: imageID, title: name).environmentObject(model) }
         }
+    }
+}
+
+/// Künstler, deren neue Songs der Server von selbst lädt.
+struct FollowedArtistsView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        List {
+            Section {
+                if model.follows.isEmpty {
+                    Text(String(localized: "Du folgst noch niemandem. Tippe auf der Seite eines Künstlers auf „Folgen“."))
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.follows) { artist in
+                    NavigationLink { ArtistDetailView(name: artist.name) } label: {
+                        HStack(spacing: 12) {
+                            ArtworkView(id: model.artistInfo(artist.name)?.image ?? model.artistAlbums(artist.name).first?.coverId,
+                                        symbol: "person.fill", cornerRadius: 0)
+                                .frame(width: 40, height: 40)
+                                .clipShape(Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(artist.name)
+                                Text(String(localized: "Seit \(Date(timeIntervalSince1970: TimeInterval(artist.since)).formatted(date: .abbreviated, time: .omitted))"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .onDelete { offsets in
+                    let names = offsets.map { model.follows[$0].name }
+                    Task { for name in names { await model.setFollowing(name, false) } }
+                }
+            } footer: {
+                Text(model.followsLoaded
+                     ? String(localized: "Veröffentlicht einer dieser Künstler etwas Neues, lädt dein Server es automatisch. Die App legt es auf dieses Gerät und zeigt es auf der Startseite.").forThisDevice
+                     : String(localized: "Auf deinem Server ist der Musik-Dienst nicht eingerichtet. Die Künstler werden gemerkt, neue Songs aber nicht geladen."))
+            }
+        }
+        .navigationTitle(String(localized: "Künstler, denen du folgst"))
+        .toolbar { if !model.follows.isEmpty { EditButton() } }
     }
 }
 

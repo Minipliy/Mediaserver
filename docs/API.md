@@ -35,7 +35,9 @@ Eine persönliche Bibliothek mit einem gemeinsamen API-Token. Kein Mehrbenutzers
 | POST | `/v1/music/jobs` | `{kind,item_id,title,artist?,cover?}` legt einen Auftrag an: 201; läuft derselbe schon: 200 mit diesem |
 | DELETE | `/v1/music/jobs/{id}` | Laufend: 202, stoppt nach dem aktuellen Song. Sonst: 204, Eintrag entfernt |
 | GET | `/v1/progress/{id}` | `{seconds,updated_at}`, zunächst 0 |
-| PUT | `/v1/progress/{id}` | `{seconds:42.5}` speichern, dann 204 |
+| PUT | `/v1/progress/{id}` | `{seconds:42.5, updated_at?}` speichern, dann 204. `updated_at` (Unix-Sekunden) ist, wann das Gerät die Stelle gespeichert hat, auch offline lange vorher; es gilt immer die neueste Stelle, ein später nachgereichter älterer Stand überschreibt also keinen neueren. Ohne Angabe gilt „jetzt“, Zeiten in der Zukunft werden auf jetzt begrenzt |
+| GET | `/v1/music/follows` | `{follows:[{name,since}], loading}`: Künstler, denen gefolgt wird. `loading` heißt, der Musik-Dienst ist eingerichtet und lädt Neues |
+| POST | `/v1/music/follows` | `{name, follow}` folgt (true) oder entfolgt (false); Antwort wie GET. Höchstens 500 Künstler. Der Server prüft alle 6 Stunden die Veröffentlichungen im iTunes-Katalog und legt für alles, was seit dem Tag des Folgens erschienen ist, einen Musik-Auftrag an (je Veröffentlichung einmal) |
 
 `kind` ist optional und kann `audio`, `video` oder `file` sein. Limits werden auf 1–500 begrenzt. `path` ist ein relativer, exakt im Index vorhandener Verzeichnispfad; das Wurzelverzeichnis ist die leere Zeichenfolge. Verzeichnisse werden vollständig ausgegeben, Dateien paginiert. Alle Objekte verwenden JSON mit `snake_case`.
 

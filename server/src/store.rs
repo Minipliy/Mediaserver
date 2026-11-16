@@ -40,7 +40,9 @@ impl Store {
             CREATE TABLE IF NOT EXISTS loudness (media_id TEXT PRIMARY KEY, modified INTEGER NOT NULL, gain_db REAL);
             CREATE TABLE IF NOT EXISTS intros (media_id TEXT PRIMARY KEY, modified INTEGER NOT NULL, start REAL, end REAL);
             CREATE TABLE IF NOT EXISTS first_seen (media_id TEXT PRIMARY KEY, at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS push_devices (token TEXT PRIMARY KEY, environment TEXT NOT NULL, seen INTEGER NOT NULL);")?;
+            CREATE TABLE IF NOT EXISTS push_devices (token TEXT PRIMARY KEY, environment TEXT NOT NULL, seen INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS follows (name TEXT PRIMARY KEY COLLATE NOCASE, since INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS follow_releases (item_id INTEGER PRIMARY KEY, artist TEXT NOT NULL, title TEXT NOT NULL, queued_at INTEGER NOT NULL);")?;
         Ok(Self(Arc::new(Mutex::new(db))))
     }
 
@@ -136,8 +138,67 @@ impl Store {
         .await
     }
 
-    pub async fn save_progress(&self, id: String, seconds: f64) -> Result<(), ApiError> {
-        self.run(move |db| db.execute("INSERT INTO progress VALUES (?1, ?2, ?3) ON CONFLICT(media_id) DO UPDATE SET seconds=excluded.seconds, updated_at=excluded.updated_at", params![id, seconds, now() as i64]).map(|_| ())).await
+    /// Keeps the newest position: one saved offline and sent later must not
+    /// replace what another device saved in the meantime.
+    pub async fn save_progress(&self, id: String, seconds: f64, at: u64) -> Result<(), ApiError> {
+        self.run(move |db| db.execute("INSERT INTO progress VALUES (?1, ?2, ?3) ON CONFLICT(media_id) DO UPDATE SET seconds=excluded.seconds, updated_at=excluded.updated_at WHERE excluded.updated_at >= progress.updated_at", params![id, seconds, at as i64]).map(|_| ())).await
+    }
+
+    pub async fn follows(&self) -> Result<Vec<(String, u64)>, ApiError> {
+        self.run(|db| {
+            let mut stmt =
+                db.prepare("SELECT name, since FROM follows ORDER BY name COLLATE NOCASE")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+            })?;
+            rows.collect()
+        })
+        .await
+    }
+
+    /// Following again keeps the original date, so nothing older comes back.
+    pub async fn follow(&self, name: String, since: u64) -> Result<(), ApiError> {
+        self.run(move |db| {
+            db.execute(
+                "INSERT INTO follows VALUES (?1, ?2) ON CONFLICT(name) DO NOTHING",
+                params![name, since as i64],
+            )
+            .map(|_| ())
+        })
+        .await
+    }
+
+    pub async fn unfollow(&self, name: String) -> Result<(), ApiError> {
+        self.run(move |db| {
+            db.execute("DELETE FROM follows WHERE name = ?1", [name])
+                .map(|_| ())
+        })
+        .await
+    }
+
+    pub async fn queued_releases(&self) -> Result<std::collections::HashSet<u64>, ApiError> {
+        self.run(|db| {
+            let mut stmt = db.prepare("SELECT item_id FROM follow_releases")?;
+            let rows = stmt.query_map([], |row| Ok(row.get::<_, i64>(0)? as u64))?;
+            rows.collect()
+        })
+        .await
+    }
+
+    pub async fn mark_release_queued(
+        &self,
+        id: u64,
+        artist: String,
+        title: String,
+    ) -> Result<(), ApiError> {
+        self.run(move |db| {
+            db.execute(
+                "INSERT OR IGNORE INTO follow_releases VALUES (?1, ?2, ?3, ?4)",
+                params![id as i64, artist, title, now() as i64],
+            )
+            .map(|_| ())
+        })
+        .await
     }
 
     pub async fn load_metadata(&self) -> Result<HashMap<String, Entry>, ApiError> {

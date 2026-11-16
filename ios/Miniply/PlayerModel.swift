@@ -62,7 +62,8 @@ final class PlayerModel: ObservableObject {
     private var notifications: [NSObjectProtocol] = []
     private var lastSaved = -10.0
     private var progressPrefix = ""
-    private var pending: [String: Double] = [:]
+    /// Positions not yet on the server: seconds and when they were saved.
+    private var pending: [String: (seconds: Double, at: Double)] = [:]
     private var syncing = false
     private var resumeAfterInterruption = false
     private var wantsToPlay = false {
@@ -359,9 +360,10 @@ final class PlayerModel: ObservableObject {
                 if local == nil, StreamPolicy.blocks(kind: media.kind, on: network) {
                     throw MiniplyError.message(StreamPolicy.blockedMessage(kind: media.kind))
                 }
-                // Songs always start from the beginning; only videos resume.
+                // Songs always start from the beginning; only videos resume. The server
+                // is asked also for a downloaded file: another device may be further.
                 let resumes = media.kind == "video"
-                let shouldFetchResume = startAt == nil && resumes && local == nil && !UserDefaults.standard.bool(forKey: selectedPrefix + media.id + ".pending")
+                let shouldFetchResume = startAt == nil && resumes && network.online
                 async let remoteResume: PlaybackProgress? = shouldFetchResume ? selectedAPI?.playbackProgress(media) : nil
                 let url: URL
                 let adaptive = local == nil && media.kind == "video" && media.hls == true && !adaptiveRefused.contains(media.id)
@@ -395,7 +397,12 @@ final class PlayerModel: ObservableObject {
                 guard generation == expected else { return }
                 if let loadedDuration { duration = loadedDuration }
                 var resume = resumes ? UserDefaults.standard.double(forKey: selectedPrefix + media.id) : 0
-                if let remote = await remoteResume { resume = remote.seconds }
+                if let remote = await remoteResume {
+                    resume = PlaybackProgress.resumePosition(local: resume,
+                                                localAt: UserDefaults.standard.double(forKey: selectedPrefix + media.id + ".at"),
+                                                localPending: UserDefaults.standard.bool(forKey: selectedPrefix + media.id + ".pending"),
+                                                remote: remote)
+                }
                 if let startAt { resume = startAt }
                 try Task.checkCancellation()
                 guard generation == expected else { return }
@@ -705,6 +712,7 @@ final class PlayerModel: ObservableObject {
         let previous = network
         network = next
         guard next != previous else { return }
+        if next.online && !previous.online, let model { sendSavedPositions(model: model) }
         if isStreaming {
             player.currentItem?.preferredForwardBufferDuration = StreamPolicy.forwardBuffer(next)
             player.currentItem?.preferredPeakBitRate = StreamPolicy.peakBitrate(next)
@@ -905,6 +913,23 @@ final class PlayerModel: ObservableObject {
     }
     /// Next entry after the current one, if any (for "Nächste Folge").
     var nextItem: Media? { index + 1 < queue.count ? queue[index + 1] : nil }
+
+    /// After the last episode of a season: the first episode of the next season
+    /// of the same series, with that season as the queue.
+    var nextSeason: (first: Media, episodes: [Media])? {
+        guard nextItem == nil, let current, current.kind == "video", let model else { return nil }
+        for group in model.seriesGroups {
+            guard let index = group.seasons.firstIndex(where: { $0.episodes.contains { $0.id == current.id } }) else { continue }
+            guard index + 1 < group.seasons.count, let first = group.seasons[index + 1].episodes.first else { return nil }
+            return (first, group.seasons[index + 1].episodes)
+        }
+        return nil
+    }
+
+    func startNextSeason() {
+        guard let season = nextSeason, let model else { return }
+        play(season.first, in: season.episodes, model: model)
+    }
 
     /// First in the queue, or start it if nothing plays.
     func playNext(_ media: Media, model: AppModel) {
@@ -1252,7 +1277,7 @@ final class PlayerModel: ObservableObject {
             pause()
         }
         if let value = player.currentItem?.duration.seconds, value.isFinite { duration = value }
-        if isPlaying && abs(seconds - lastSaved) >= 10 { recordProgress(seconds); lastSaved = seconds }
+        if isPlaying && abs(seconds - lastSaved) >= 5 { recordProgress(seconds); lastSaved = seconds }
         if let current, current.kind == "video", duration > 0, seconds / duration >= 0.93 {
             personal?.setWatched(current, true)
         }
@@ -1269,19 +1294,42 @@ final class PlayerModel: ObservableObject {
         guard positionReady, player.currentItem?.status == .readyToPlay,
               let current, current.kind == "video", time.isFinite, time >= 0 else { return }
         let key = progressPrefix + current.id
+        let at = Date().timeIntervalSince1970
         UserDefaults.standard.set(time, forKey: key)
+        UserDefaults.standard.set(at, forKey: key + ".at")
         UserDefaults.standard.set(true, forKey: key + ".pending")
-        pending[current.id] = time
+        pending[current.id] = (time, at)
         syncProgress()
     }
+
+    /// Positions saved without a connection, also before the app was closed,
+    /// go to the server as soon as it answers again.
+    func sendSavedPositions(model: AppModel) {
+        guard let address = model.connection?.baseURL.absoluteString, let api = model.api else { return }
+        let prefix = Self.progressPrefix(address)
+        if api !== self.api && current == nil { self.api = api }
+        if prefix != progressPrefix && current == nil { progressPrefix = prefix; pending = [:] }
+        guard prefix == progressPrefix else { return }
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) && key.hasSuffix(".pending") {
+            guard defaults.bool(forKey: key) else { continue }
+            let id = String(key.dropFirst(prefix.count).dropLast(".pending".count))
+            guard !id.isEmpty, pending[id] == nil else { continue }
+            let at = defaults.double(forKey: prefix + id + ".at")
+            pending[id] = (defaults.double(forKey: prefix + id), at > 0 ? at : Date().timeIntervalSince1970)
+        }
+        syncProgress()
+    }
+
     private func syncProgress() {
-        guard !syncing, let api, let (id, time) = pending.first else { return }
+        guard !syncing, let api, let (id, entry) = pending.first else { return }
         let prefix = progressPrefix
         syncing = true
         Task {
             do {
-                try await api.send("/v1/progress/\(id)", method: "PUT", value: PlaybackProgress(seconds: time))
-                if prefix == progressPrefix && pending[id] == time {
+                try await api.send("/v1/progress/\(id)", method: "PUT",
+                                   value: PlaybackProgress(seconds: entry.seconds, updatedAt: UInt64(entry.at)))
+                if prefix == progressPrefix && pending[id]?.seconds == entry.seconds && pending[id]?.at == entry.at {
                     pending.removeValue(forKey: id)
                     UserDefaults.standard.set(false, forKey: prefix + id + ".pending")
                 }

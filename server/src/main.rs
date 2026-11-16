@@ -26,6 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     miniply_server::thumbnails::spawn(state.clone());
     miniply_server::analysis::spawn(state.clone());
     miniply_server::music::spawn(state.clone());
+    miniply_server::follows::spawn(state.clone());
     miniply_server::music_catalog::spawn(state.clone());
     state.spawn_trash_cleanup();
     let scanner = state.clone();

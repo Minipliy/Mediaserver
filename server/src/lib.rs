@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod catalog;
 pub mod extras;
 mod file_access;
+pub mod follows;
 mod formats;
 mod genius;
 mod hls;
@@ -283,6 +284,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/music/artist", get(music::artist))
         .route("/v1/music/preview", get(music::preview))
         .route("/v1/music/jobs", get(music::jobs).post(music::create_job))
+        .route(
+            "/v1/music/follows",
+            get(follows::list).post(follows::change),
+        )
         .route(
             "/v1/music/jobs/{id}",
             axum::routing::delete(music::delete_job),
@@ -617,7 +622,15 @@ async fn save_progress(
     if !progress.seconds.is_finite() || !(0.0..=604_800.0).contains(&progress.seconds) {
         return Err(ApiError::bad_request("seconds out of bounds"));
     }
-    state.store.save_progress(id, progress.seconds).await?;
+    // When the position was saved on the device, maybe long ago without a
+    // connection; never in the future, and 0 (older apps) means now.
+    let now = catalog::now();
+    let at = if progress.updated_at == 0 {
+        now
+    } else {
+        progress.updated_at.min(now)
+    };
+    state.store.save_progress(id, progress.seconds, at).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn playlists(State(state): State<AppState>) -> Result<Json<Vec<Playlist>>, ApiError> {

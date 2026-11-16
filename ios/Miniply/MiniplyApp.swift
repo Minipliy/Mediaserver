@@ -33,6 +33,7 @@ struct MediaserverApp: App {
                             // Folgen, die auf dem iPad oder im Browser geschaut wurden, gleich
                             // berücksichtigen: Gesehenes entfernen, die nächsten Folgen laden.
                             await personal.sync()
+                            playback.sendSavedPositions(model: model)
                             model.removeWatchedDownloads(watched: personal.watched, playing: playback.current?.id)
                             await model.runAutoDownloads()
                         }
@@ -159,6 +160,7 @@ struct RootView: View {
             // Without a saved library it was not known before the first answer.
             playback.restoreSession(model: model)
             await personal.sync()
+            playback.sendSavedPositions(model: model)
         }
         .onChange(of: model.connection) { _, connection in
             if connection == nil { uploads.connectionRemoved() }
@@ -925,6 +927,9 @@ struct SettingsView: View {
                 NavigationLink { FilesView(path: "") } label: { Label("SSD durchsuchen", systemImage: "folder") }
                 NavigationLink { UploadView() } label: { Label(String(localized: "Vom iPhone hochladen").forThisDevice, systemImage: "square.and.arrow.up") }
                 NavigationLink { MusicFinderView() } label: { Label(String(localized: "Musik finden"), systemImage: "magnifyingglass") }
+                if model.followsSupported {
+                    NavigationLink { FollowedArtistsView() } label: { Label(String(localized: "Künstler, denen du folgst"), systemImage: "bell") }
+                }
                 Toggle(String(localized: "Downloads über Mobilfunk"), isOn: $cellularDownloads)
                 Toggle(String(localized: "Automatische Downloads nur im WLAN"), isOn: $autoDownloadWifiOnly)
                 Toggle(String(localized: "Gesehene Folgen und Filme entfernen"), isOn: $removeWatched)

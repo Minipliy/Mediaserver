@@ -494,7 +494,7 @@ struct EpisodeRow: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(isCurrent ? Color.mint : personal.isWatched(media) ? Color.secondary : Color.primary)
                             .lineLimit(2)
-                        let facts = [media.episode.map { String(localized: "Folge \($0)") }, info?.runtime.map { String(localized: "\($0) Min.") } ?? durationLabel(media.duration), germanDate(info?.airdate)]
+                        let facts = [media.episode.map { String(localized: "Folge \($0)") }, durationLabel(media.duration) ?? info?.runtime.map { String(localized: "\($0) Min.") }, germanDate(info?.airdate)]
                             .compactMap { $0 }
                         if !facts.isEmpty {
                             Text(facts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)

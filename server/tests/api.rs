@@ -891,6 +891,43 @@ async fn playlists_and_progress_survive_restart() {
 }
 
 #[tokio::test]
+async fn newest_position_wins_even_when_sent_late() {
+    let f = Fixture::new().await;
+    let id = f.id("video").await;
+    let path = format!("/v1/progress/{id}");
+    let put = |seconds: f64, at: u64| json!({"seconds": seconds, "updated_at": at});
+    // The iPad saves minute 20 now; the iPhone sends its offline minute 14 from earlier.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for (seconds, at) in [(1200.0, now - 60), (840.0, now - 600)] {
+        let (status, _, _) = f
+            .call("PUT", &path, true, Some(put(seconds, at)), &[])
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    let (_, _, body) = f.call("GET", &path, true, None, &[]).await;
+    let saved: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(saved["seconds"], 1200.0);
+    // A newer one replaces it; a time in the future counts as now.
+    f.call("PUT", &path, true, Some(put(1300.0, now + 86_400)), &[])
+        .await;
+    let (_, _, body) = f.call("GET", &path, true, None, &[]).await;
+    let saved: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(saved["seconds"], 1300.0);
+    assert!(saved["updated_at"].as_u64().unwrap() <= now + 5);
+    // Older apps send no time: it counts as now.
+    f.call("PUT", &path, true, Some(json!({"seconds": 1400.0})), &[])
+        .await;
+    let (_, _, body) = f.call("GET", &path, true, None, &[]).await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["seconds"],
+        1400.0
+    );
+}
+
+#[tokio::test]
 async fn rejects_invalid_updates_and_keeps_database_private() {
     let f = Fixture::new().await;
     let id = f.id("audio").await;

@@ -732,11 +732,30 @@ pub async fn jobs(State(state): State<AppState>) -> Result<Json<Value>, ApiError
 
 #[derive(Deserialize)]
 pub struct NewJob {
-    kind: String,
-    item_id: u64,
-    title: String,
-    artist: Option<String>,
-    cover: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) item_id: u64,
+    pub(crate) title: String,
+    pub(crate) artist: Option<String>,
+    pub(crate) cover: Option<String>,
+}
+
+/// Every release of an artist, newest first, from a catalog copy at most
+/// `fresh` seconds old. Also returns the name as the catalog spells it.
+pub(crate) async fn releases_of(
+    state: &AppState,
+    name: &str,
+    fresh: u64,
+) -> Option<(String, Vec<Value>)> {
+    let (id, artist) = exact_artist(state, name).await?;
+    let albums =
+        crate::music_catalog::catalog_within(state, lookup_url(id, "album")?, fresh).await?;
+    let releases = artist_releases(&albums, &artist);
+    Some((artist, releases))
+}
+
+/// The music folder for requests, when the music service is set up.
+pub(crate) fn jobs_directory(state: &AppState) -> Option<std::path::PathBuf> {
+    directory(state).ok().cloned()
 }
 
 fn shortened(value: &str) -> String {
@@ -752,14 +771,26 @@ pub async fn create_job(
         return Err(ApiError::bad_request("unknown kind or catalog number"));
     }
     tokio::task::spawn_blocking(move || {
-        let jobs = read_jobs(&directory);
+        write_job(&directory, new).map(|(status, job)| (status, Json(job)).into_response())
+    })
+    .await
+    .map_err(|_| ApiError::internal())?
+}
+
+/// Files a request for the music service, or returns the same one already waiting.
+pub(crate) fn write_job(
+    directory: &std::path::Path,
+    new: NewJob,
+) -> Result<(StatusCode, Value), ApiError> {
+    {
+        let jobs = read_jobs(directory);
         let same = jobs.iter().find(|job| {
             is_active(job)
                 && job.get("kind").and_then(Value::as_str) == Some(new.kind.as_str())
                 && job.get("item_id").and_then(Value::as_u64) == Some(new.item_id)
         });
         if let Some(same) = same {
-            return Ok((StatusCode::OK, Json(same.clone())).into_response());
+            return Ok((StatusCode::OK, Value::Object(same.clone())));
         }
         if jobs.iter().filter(|job| is_active(job)).count() >= ACTIVE_JOBS {
             return Err(ApiError(
@@ -791,10 +822,8 @@ pub async fn create_job(
         std::fs::write(&temporary, data).map_err(|_| ApiError::internal())?;
         std::fs::rename(&temporary, directory.join(format!("{id}.json")))
             .map_err(|_| ApiError::internal())?;
-        Ok((StatusCode::CREATED, Json(job)).into_response())
-    })
-    .await
-    .map_err(|_| ApiError::internal())?
+        Ok((StatusCode::CREATED, job))
+    }
 }
 
 /// Stops a running request after its current song; otherwise forgets it.

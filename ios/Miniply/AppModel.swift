@@ -45,6 +45,12 @@ final class AppModel: ObservableObject {
     /// they start by themselves once the iPhone is on Wi-Fi and the server answers.
     @Published private(set) var waitingDownloads: [Media] = []
     @Published private(set) var autoDownloads = AutoDownloadSettings()
+    /// Artists whose new releases the server loads; kept on the server for every device.
+    @Published private(set) var follows: [FollowedArtist] = []
+    /// The server knows about following (older servers do not).
+    @Published private(set) var followsSupported = false
+    /// The music service is set up, so new releases are really loaded.
+    @Published private(set) var followsLoaded = false
     /// Watched episodes live in `Personal`; set by the root view.
     var watchedIDs: () -> Set<String> = { [] }
     private var autoDownloadsRunning = false
@@ -117,6 +123,10 @@ final class AppModel: ObservableObject {
            let saved = try? JSONDecoder().decode(AutoDownloadSettings.self, from: data) { autoDownloads = saved }
         if let data = try? Data(contentsOf: directory.appendingPathComponent("waiting-downloads.json")),
            let saved = try? JSONDecoder().decode([Media].self, from: data) { waitingDownloads = saved }
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("follows.json")),
+           let saved = try? JSONDecoder().decode(FollowList.self, from: data) {
+            follows = saved.follows; followsSupported = true; followsLoaded = saved.loading
+        }
         reloadDownloads()
     }
 
@@ -232,6 +242,7 @@ final class AppModel: ObservableObject {
         api = nil; connection = nil
         setLibrary([]); playlists = []; offline = []; offlineByID = [:]; storage = nil; downloading = []; DownloadProgress.shared.update([:]); queuedDownloads = []; notice = nil
         autoDownloads = AutoDownloadSettings(); pausedDownloads = []; waitingDownloads = []
+        follows = []; followsSupported = false; followsLoaded = false
         metadata = LibraryMetadata()
         lyricsByID = [:]; lyricsRequests = [:]; lyricsChecked = []
         isOffline = false; lastRefresh = nil; serverStatus = .unknown
@@ -289,8 +300,11 @@ final class AppModel: ObservableObject {
             let info: StorageInfo = try await api.get("/v1/storage")
             // Optional: older servers have no metadata route.
             let online: LibraryMetadata? = try? await api.get("/v1/metadata")
+            // Optional too: only servers with following answer here.
+            let followed: FollowList? = try? await api.get("/v1/music/follows")
             guard expected == revision, requestID == refreshRevision, !Task.isCancelled else { return }
             if let online { metadata = online }
+            if let followed { applyFollows(followed) } else { followsSupported = false }
             setLibrary(all); storage = info
             if expectedPlaylists == playlistRevision && !playlistMutationInProgress { playlists = lists }
             isOffline = false; lastRefresh = Date()
@@ -476,6 +490,45 @@ final class AppModel: ObservableObject {
 
     // MARK: Automatic downloads
 
+    // MARK: Following artists
+
+    func isFollowing(_ name: String) -> Bool { follows.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame } }
+
+    func setFollowing(_ name: String, _ on: Bool) async {
+        guard let api else { return }
+        do {
+            let list: FollowList = try await api.sendAndDecode("/v1/music/follows", method: "POST", value: FollowChange(name: name, follow: on))
+            applyFollows(list)
+            if on { await runAutoDownloads() }
+        } catch {
+            self.error = on ? String(localized: "Folgen hat nicht geklappt: \(error.localizedDescription)")
+                            : String(localized: "Entfolgen hat nicht geklappt: \(error.localizedDescription)")
+        }
+    }
+
+    private func applyFollows(_ list: FollowList) {
+        follows = list.follows; followsSupported = true; followsLoaded = list.loading
+        try? persist(list, name: "follows.json")
+    }
+
+    /// Songs of followed artists that arrived after following, newest first.
+    var newFromFollowed: [Media] {
+        guard !follows.isEmpty else { return [] }
+        let since = Dictionary(follows.map { ($0.name.lowercased(), $0.since) }, uniquingKeysWith: min)
+        return items.filter { media in
+            media.kind == "audio" && media.allArtists.contains { since[$0.lowercased()].map { media.addedAt >= $0 } ?? false }
+        }
+        .sorted { $0.addedAt > $1.addedAt }
+    }
+
+    /// Albums with new songs of followed artists, for the start page.
+    var newAlbumsFromFollowed: [Album] {
+        let fresh = newFromFollowed
+        guard !fresh.isEmpty else { return [] }
+        let ids = Set(fresh.map(\.id))
+        return albums.filter { $0.tracks.contains { ids.contains($0.id) } }.sorted { $0.addedAt > $1.addedAt }
+    }
+
     func isAutoDownloading(playlist: Playlist) -> Bool { autoDownloads.playlists.contains(playlist.id) }
     func isAutoDownloading(series: SeriesGroup) -> Bool { autoDownloads.series.contains(series.id) }
 
@@ -500,12 +553,13 @@ final class AppModel: ObservableObject {
     /// Start whatever the marked playlists and series still need. Does nothing
     /// in Low Data Mode, and on mobile data unless the setting allows it.
     func runAutoDownloads() async {
-        guard api != nil, !autoDownloads.isEmpty, !autoDownloadsRunning, network.online, !network.constrained else { return }
+        guard api != nil, !autoDownloads.isEmpty || !follows.isEmpty, !autoDownloadsRunning, network.online, !network.constrained else { return }
         let wifiOnly = UserDefaults.standard.object(forKey: AutoDownloadSettings.wifiOnlyKey) as? Bool ?? true
         if wifiOnly && network.expensive { return }
         autoDownloadsRunning = true
         defer { autoDownloadsRunning = false }
         let wanted = autoDownloads.wanted(playlists: playlists, seriesGroups: seriesGroups, library: mediaByID, watched: watchedIDs())
+            + newFromFollowed.filter { !autoDownloads.skipped.contains($0.id) }
         for media in wanted where localURL(media) == nil && !downloading.contains(media.id) {
             if let failure = await startDownload(media, allowsCellular: !wifiOnly) {
                 notice = String(localized: "Automatische Downloads angehalten: \(failure)")
@@ -575,12 +629,36 @@ final class AppModel: ObservableObject {
     /// What is still loading or waiting for Wi-Fi stops too; it would only arrive to be removed again.
     func removeWatchedDownloads(watched: Set<String>, playing: String?) {
         guard UserDefaults.standard.bool(forKey: AutoDownloadSettings.removeWatchedKey) else { return }
-        for record in offline where record.media.kind == "video" && watched.contains(record.id) && record.id != playing {
-            removeDownload(record)
-        }
+        let removed = offline.filter { $0.media.kind == "video" && watched.contains($0.id) && $0.id != playing }
+        for record in removed { removeDownload(record) }
+        let following = nextEpisodes(after: removed.map(\.id), watched: watched)
+        if !following.isEmpty { Task { for media in following { await download(media) } } }
         let unfinished = (downloading.compactMap { mediaByID[$0] } + waitingDownloads.filter { !downloading.contains($0.id) })
             .filter { $0.kind == "video" && watched.contains($0.id) && $0.id != playing }
         if !unfinished.isEmpty { Task { for media in unfinished { await cancelDownload(media) } } }
+    }
+
+    /// For each watched episode that left this device, the next unwatched one of
+    /// the same series that is not here yet: someone who had episodes 20 and 21
+    /// with them and watched 20 elsewhere finds 21 and 22. Files the person
+    /// removed or cancelled before stay away.
+    func nextEpisodes(after removed: [String], watched: Set<String>) -> [Media] {
+        var present = Set(offline.map(\.id)).union(downloading).union(waitingDownloads.map(\.id))
+        var result: [Media] = []
+        for id in removed {
+            guard let group = seriesGroups.first(where: { $0.seasons.contains { $0.episodes.contains { $0.id == id } } }) else { continue }
+            let all = group.seasons.flatMap(\.episodes)
+            // After the last episode of this series still here (or the one just watched).
+            guard let start = all.lastIndex(where: { present.contains($0.id) || $0.id == id }) else { continue }
+            let next = all[(start + 1)...].first {
+                !watched.contains($0.id) && !present.contains($0.id) && !autoDownloads.skipped.contains($0.id)
+            }
+            if let next {
+                result.append(next)
+                present.insert(next.id)
+            }
+        }
+        return result
     }
 
     func removeDownloads(_ list: [Media]) {
