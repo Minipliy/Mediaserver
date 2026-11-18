@@ -1,4 +1,41 @@
+import CryptoKit
 import Foundation
+
+/// The last answer to lists the app fetches again and again, with the server's
+/// fingerprint (ETag). Sent back, an unchanged list costs a "304" without data:
+/// on mobile data a check is a few bytes instead of the whole library.
+final class AnswerStore: @unchecked Sendable {
+    static let shared = AnswerStore()
+    private let lock = NSLock()
+    private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("miniply-answers", isDirectory: true)
+
+    private func file(_ url: URL, _ ending: String) -> URL {
+        let name = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name + ending)
+    }
+
+    func load(_ url: URL) -> (tag: String, body: Data)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let tag = try? String(contentsOf: file(url, ".tag"), encoding: .utf8),
+              let body = try? Data(contentsOf: file(url, ".body")) else { return nil }
+        return (tag, body)
+    }
+
+    func save(_ body: Data, tag: String, for url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Body first: a tag without its body is never read as valid.
+        guard (try? body.write(to: file(url, ".body"), options: .atomic)) != nil else { return }
+        try? tag.write(to: file(url, ".tag"), atomically: true, encoding: .utf8)
+    }
+
+    func forget(_ url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        try? FileManager.default.removeItem(at: file(url, ".tag"))
+        try? FileManager.default.removeItem(at: file(url, ".body"))
+    }
+}
 
 /// Refuse cross-origin redirects so a download cannot forward its Bearer token.
 private final class RedirectGuard: NSObject, URLSessionTaskDelegate {
@@ -77,9 +114,27 @@ final class API {
         }
     }
 
+    /// Lists answered with a fingerprint by the server (see `AnswerStore`).
+    static let rememberedPaths: Set<String> = ["/v1/library", "/v1/metadata", "/v1/playlists", "/v1/music/follows"]
+
     func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        let (data, response) = try await session.data(for: request(path, query: query))
+        var request = try request(path, query: query)
+        let url = request.url
+        let stored = Self.rememberedPaths.contains(path) ? url.flatMap(AnswerStore.shared.load) : nil
+        if let stored { request.setValue(stored.tag, forHTTPHeaderField: "If-None-Match") }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode
+        if status == 304, let stored, let url {
+            if let value = try? decoder.decode(T.self, from: stored.body) { return value }
+            // A stored answer that no longer fits: ask once more without it.
+            AnswerStore.shared.forget(url)
+            return try await get(path, query: query)
+        }
         try check(response)
+        if Self.rememberedPaths.contains(path), let url,
+           let tag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") {
+            AnswerStore.shared.save(data, tag: tag, for: url)
+        }
         return try decoder.decode(T.self, from: data)
     }
 

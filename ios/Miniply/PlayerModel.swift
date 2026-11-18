@@ -30,6 +30,11 @@ final class PlayerModel: ObservableObject {
     /// Shuffle and repeat apply to music queues; series episodes stay in order.
     @Published private(set) var shuffle = UserDefaults.standard.bool(forKey: "mediaserver.shuffle")
     @Published private(set) var repeatMode = RepeatMode(rawValue: UserDefaults.standard.string(forKey: "mediaserver.repeat") ?? "") ?? .off
+    /// The album or playlist now playing, if it was started from one: shuffle and
+    /// repeat changed in the player belong to it and show on its page at once.
+    @Published private(set) var activeCollection: String?
+    /// Set by `applySettings` right before the collection's own `play`.
+    private var collectionStarting = false
     @Published private(set) var queue: [Media] = []
     private var originalQueue: [Media] = []
     /// Songs added by hand. They come before the songs that would follow anyway
@@ -300,6 +305,11 @@ final class PlayerModel: ObservableObject {
     /// Start `media`. `rearrange` is false for internal moves within the
     /// current (possibly shuffled) queue.
     func play(_ media: Media, in queue: [Media] = [], model: AppModel, rearrange: Bool = true, startAt: Double? = nil, isRetry: Bool = false) {
+        if rearrange {
+            // Something new that was not started from an album or playlist.
+            if !collectionStarting { activeCollection = nil }
+            collectionStarting = false
+        }
         recordProgress(seconds)
         reconnectTask?.cancel(); stallWatch?.cancel(); blockedByPolicy = false; isStreaming = false; phantomStart = nil
         usingAdaptive = false
@@ -1037,8 +1047,10 @@ final class PlayerModel: ObservableObject {
         guard let model, queue.contains(where: { $0.id == media.id }) else { return }
         play(media, in: queue, model: model, rearrange: false)
     }
-    func setShuffle(_ enabled: Bool) {
+    /// `remember`: a choice of the person, kept for the album or playlist playing.
+    func setShuffle(_ enabled: Bool, remember: Bool = true) {
         shuffle = enabled
+        defer { if remember { rememberForCollection() } }
         UserDefaults.standard.set(enabled, forKey: "mediaserver.shuffle")
         if let current, current.kind == "audio", !originalQueue.isEmpty {
             let waiting = upNext.filter { queuedIDs.contains($0.id) }
@@ -1050,23 +1062,31 @@ final class PlayerModel: ObservableObject {
         updateNowPlaying()
     }
     func toggleShuffle() { setShuffle(!shuffle) }
-    func setRepeat(_ mode: RepeatMode) {
+    func setRepeat(_ mode: RepeatMode, remember: Bool = true) {
         repeatMode = mode
+        defer { if remember { rememberForCollection() } }
         UserDefaults.standard.set(mode.rawValue, forKey: "mediaserver.repeat")
         syncPreload()
         updateNowPlaying()
     }
     func cycleRepeat() { setRepeat(repeatMode.next) }
     /// What was set for this album or playlist, if anything, applies whenever it starts.
-    func applySettings(ofCollection id: String) {
+    /// `starting`: the collection's `play` follows; otherwise it already plays.
+    func applySettings(ofCollection id: String, starting: Bool = true) {
+        activeCollection = id
+        collectionStarting = starting
         guard let settings = CollectionPlayback.load(id) else { return }
-        setShuffle(settings.shuffle)
-        setRepeat(settings.repeatMode)
+        setShuffle(settings.shuffle, remember: false)
+        setRepeat(settings.repeatMode, remember: false)
+    }
+    private func rememberForCollection() {
+        guard let activeCollection else { return }
+        CollectionPlayback(shuffle: shuffle, repeatValue: repeatMode.rawValue).save(activeCollection)
     }
     /// Play a list in random order, e.g. "Zufallswiedergabe" on an album.
     func playShuffled(_ tracks: [Media], model: AppModel) {
         guard let first = tracks.randomElement() else { return }
-        setShuffle(true)
+        setShuffle(true, remember: collectionStarting)
         play(first, in: tracks, model: model)
     }
     /// Lock screen and Control Center artwork; set by the views once loaded.

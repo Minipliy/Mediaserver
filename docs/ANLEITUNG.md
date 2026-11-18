@@ -231,7 +231,7 @@ Titel, Interpret und Albumname liest der Server aus den Musikdateien selbst. Bes
 Ehrlich und vollständig:
 
 - **Deine Medien:** Nur zu deinen eigenen Geräten, verschlüsselt durch den Tunnel.
-- **Namen von Alben, Interpreten, Serien und Filmen:** Der Server fragt damit bei der iTunes-Suche (Apple), Wikipedia, MusicBrainz, TVmaze, LRCLIB und Genius nach Beschreibungen, Covern und Songtexten. Er schickt dabei **nur die Namen**, keine Dateien und nichts über dich. Das kannst du abschalten: In `/etc/miniply/server.env` die Zeile `MINIPLY_ONLINE_METADATA=1` auf `0` ändern (`sudo nano /etc/miniply/server.env`, ändern, `Strg`+`O`, Enter, `Strg`+`X`) und dann `sudo systemctl restart miniply`.
+- **Namen von Alben, Interpreten, Serien und Filmen:** Der Server fragt damit bei der iTunes-Suche (Apple), Wikipedia, MusicBrainz, TVmaze, LRCLIB, Genius, lyrics.ovh und NetEase Cloud Music nach Beschreibungen, Covern und Songtexten. Er schickt dabei **nur die Namen**, keine Dateien und nichts über dich. Das kannst du abschalten: In `/etc/miniply/server.env` die Zeile `MINIPLY_ONLINE_METADATA=1` auf `0` ändern (`sudo nano /etc/miniply/server.env`, ändern, `Strg`+`O`, Enter, `Strg`+`X`) und dann `sudo systemctl restart miniply`.
 - **Interpretenseiten im Web-Player:** Cover aus dem iTunes-Katalog lädt dein Browser direkt von Apple.
 - **Tailscale:** Kennt deine Geräte (siehe Schritt 6), aber nicht deine Medien.
 - Die App enthält **keine Werbung, kein Tracking und keine Analyse**.

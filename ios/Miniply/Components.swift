@@ -345,7 +345,7 @@ struct PlayButtons: View {
             Button {
                 guard let first = tracks.first else { return }
                 onPlay?()
-                playback.setShuffle(false)
+                playback.setShuffle(false, remember: false)
                 playback.play(first, in: tracks, model: model)
             } label: {
                 Label(String(localized: "Abspielen"), systemImage: "play.fill").frame(maxWidth: .infinity)
@@ -375,7 +375,13 @@ struct CollectionPlayButtons: View {
     @EnvironmentObject private var playback: PlayerModel
     @State private var settings: CollectionPlayback?
 
-    private var shown: CollectionPlayback { settings ?? CollectionPlayback() }
+    /// While this collection plays, what the player shows: a change there appears here at once.
+    private var shown: CollectionPlayback {
+        if playback.activeCollection == collection {
+            return CollectionPlayback(shuffle: playback.shuffle, repeatValue: playback.repeatMode.rawValue)
+        }
+        return settings ?? CollectionPlayback()
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -418,12 +424,14 @@ struct CollectionPlayButtons: View {
         settings = next
         next.save(collection)
         // Already playing: applies at once.
-        if tracks.contains(where: { $0.id == playback.current?.id }) { playback.applySettings(ofCollection: collection) }
+        if playback.activeCollection == collection || tracks.contains(where: { $0.id == playback.current?.id }) {
+            playback.applySettings(ofCollection: collection, starting: false)
+        }
     }
 
     private func play() {
         onPlay?()
-        if settings == nil { playback.setShuffle(false) }
+        if settings == nil && playback.activeCollection != collection { playback.setShuffle(false, remember: false) }
         playback.applySettings(ofCollection: collection)
         if shown.shuffle {
             playback.playShuffled(tracks, model: model)

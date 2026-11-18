@@ -265,9 +265,11 @@ final class AppModel: ObservableObject {
 
     /// Coming back to the app after a moment should not load the whole library again.
     var refreshIsDue: Bool {
-        isOffline || lastRefresh.map { Date().timeIntervalSince($0) >= Self.refreshPause } ?? true
+        isOffline || lastRefresh.map { Date().timeIntervalSince($0) >= refreshPause } ?? true
     }
-    private static let refreshPause = 120.0
+    /// On mobile data the library is asked about less often; an unchanged one
+    /// then costs only a few bytes anyway.
+    private var refreshPause: Double { network.expensive ? 600 : 120 }
 
     /// A dropped request must not leave the app offline until it is reopened:
     /// try again while it is on screen. Costs nothing once the server answers.

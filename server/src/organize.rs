@@ -157,6 +157,17 @@ fn split_guests(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// "Soli & Domitiana" is Soli featuring Domitiana: the first name is the
+/// artist, every further one a guest, so no artist "Soli & Domitiana" appears.
+fn split_duo(name: &str) -> (Option<String>, Vec<String>) {
+    let mut names = name
+        .split('&')
+        .map(str::trim)
+        .filter(|part| !part.is_empty());
+    let main = names.next().map(str::to_owned);
+    (main, names.map(str::to_owned).collect())
+}
+
 /// Main artist, guests and a title without "(feat. …)".
 /// "Eminem feat. Rihanna" / "Love The Way You Lie (feat. Rihanna)".
 pub fn credits(artist: Option<&str>, title: &str) -> (Option<String>, Vec<String>, String) {
@@ -172,9 +183,9 @@ pub fn credits(artist: Option<&str>, title: &str) -> (Option<String>, Vec<String
             ),
             None => (first, None),
         };
-        if !head.trim().is_empty() {
-            main = Some(head.trim().to_owned());
-        }
+        let (first, more) = split_duo(head);
+        main = first;
+        guests.extend(more);
         if let Some(tail) = tail {
             guests.extend(split_guests(tail));
         }
@@ -571,7 +582,14 @@ pub fn organize(catalog: &mut Catalog) {
                         featured.insert(0, guest);
                     }
                 }
-                media.artist = main.or(folder_artist);
+                media.artist = match main {
+                    Some(main) => Some(main),
+                    None => folder_artist.and_then(|folder| {
+                        let (first, more) = split_duo(&folder);
+                        featured.extend(more);
+                        first
+                    }),
+                };
                 media.featured = featured;
                 media.title = clean_title;
             }
@@ -814,11 +832,15 @@ mod tests {
         assert_eq!(main.as_deref(), Some("Calvin Harris"));
         assert_eq!(guests, vec!["Rihanna".to_owned(), "Drake".to_owned()]);
         assert_eq!(title, "This Is What You Came For");
+        // With "&" the first name is the artist and the others are guests.
+        let (main, guests, _) = credits(Some("Soli & Domitiana"), "Lied");
+        assert_eq!(main.as_deref(), Some("Soli"));
+        assert_eq!(guests, vec!["Domitiana".to_owned()]);
+        let (main, guests, _) = credits(Some("Soli & Domitiana feat. Ufo361"), "Lied");
+        assert_eq!(main.as_deref(), Some("Soli"));
+        assert_eq!(guests, vec!["Domitiana".to_owned(), "Ufo361".to_owned()]);
         let (main, guests, _) = credits(Some("Simon & Garfunkel"), "The Boxer");
-        assert_eq!(
-            (main.as_deref(), guests.len()),
-            (Some("Simon & Garfunkel"), 0)
-        );
+        assert_eq!((main.as_deref(), guests.len()), (Some("Simon"), 1));
         let (main, guests, _) = credits(Some("Daft Punk; Pharrell Williams"), "Get Lucky");
         assert_eq!(main.as_deref(), Some("Daft Punk"));
         assert_eq!(guests, vec!["Pharrell Williams".to_owned()]);

@@ -6,7 +6,7 @@ Eine persönliche Bibliothek mit einem gemeinsamen API-Token. Kein Mehrbenutzers
 
 | Methode | Pfad | Ergebnis |
 |---|---|---|
-| GET | `/v1/library?kind=audio&search=…&offset=0&limit=200` | `{items,total,offset,scanned_at,scan_errors}` |
+| GET | `/v1/library?kind=audio&search=…&offset=0&limit=200` | `{items,total,offset,scanned_at,scan_errors}`; `scanned_at` ist der letzte Scan mit geänderten Dateien |
 | GET | `/v1/files?path=Serien%2FName&offset=0&limit=200` | `{path,directories,files,total}` |
 | GET | `/v1/storage` | SSD-Gesamtgröße, verfügbarer Platz, indexierte Bytes, Anzahl Dateien, Scanstatus |
 | GET | `/v1/status` | Zustand des Pi für die Statusseite: Laufzeit, Last, Arbeitsspeicher, Temperatur, SSD, Lebenszeichen des Musik-Dienstes, gemessene Songs, Staffeln mit Intro, Stand des Musik-Katalogs (`music_catalog`: `artists_ready`, `artists_listed`, `bytes`, `limit_bytes`) |
@@ -25,7 +25,7 @@ Eine persönliche Bibliothek mit einem gemeinsamen API-Token. Kein Mehrbenutzers
 | DELETE | `/v1/playlists/{id}` | 204; bei unbekannter ID 404 |
 | GET | `/v1/metadata` | Ordner-Cover und Online-Infos: `{enabled,pending,covers,albums,artists,tracks,series,movies}` |
 | GET | `/v1/artwork/{id}` | Bild: Bilddatei der Bibliothek, eingebettetes Audio-Cover oder Online-Bild (`web-…`) |
-| GET | `/v1/lyrics/{id}` | Songtext `{synced?, plain?, instrumental, source}`: `.lrc`/`.txt` neben der Datei, eingebetteter Tag, sonst Text von Genius und Zeitmarken von LRCLIB (gecacht); 404 ohne Treffer |
+| GET | `/v1/lyrics/{id}` | Songtext `{synced?, plain?, instrumental, source}`: `.lrc`/`.txt` neben der Datei, eingebetteter Tag, sonst Text von Genius und Zeitmarken von LRCLIB, ohne Treffer zusätzlich die LRCLIB-Suche, NetEase Cloud Music (Zeitmarken) und lyrics.ovh (Text); gecacht, `source` nennt die Quelle (`file`, `tag`, `lrclib`, `genius`, `netease`, `lyrics.ovh`); 404 ohne Treffer |
 | GET | `/v1/subtitles/{id}` | `.srt`/`.vtt`-Datei als UTF-8-WebVTT (`text/vtt`) |
 | POST | `/v1/upload?path=Musik%2FAlbum&name=01.mp3` | Datei als Body hochladen; 201 `{path,bytes}`, 409 wenn vorhanden, 403 wenn `MINIPLY_UPLOADS` aus |
 | POST | `/v1/media/delete` | `{ids:[…]}` (höchstens 5000) verschiebt Audio und Video in den Papierkorb: `{deleted,failed}`; 403 wenn `MINIPLY_DELETES` aus |
@@ -38,6 +38,8 @@ Eine persönliche Bibliothek mit einem gemeinsamen API-Token. Kein Mehrbenutzers
 | PUT | `/v1/progress/{id}` | `{seconds:42.5, updated_at?}` speichern, dann 204. `updated_at` (Unix-Sekunden) ist, wann das Gerät die Stelle gespeichert hat, auch offline lange vorher; es gilt immer die neueste Stelle, ein später nachgereichter älterer Stand überschreibt also keinen neueren. Ohne Angabe gilt „jetzt“, Zeiten in der Zukunft werden auf jetzt begrenzt |
 | GET | `/v1/music/follows` | `{follows:[{name,since}], loading}`: Künstler, denen gefolgt wird. `loading` heißt, der Musik-Dienst ist eingerichtet und lädt Neues |
 | POST | `/v1/music/follows` | `{name, follow}` folgt (true) oder entfolgt (false); Antwort wie GET. Höchstens 500 Künstler. Der Server prüft alle 6 Stunden die Veröffentlichungen im iTunes-Katalog und legt für alles, was seit dem Tag des Folgens erschienen ist, einen Musik-Auftrag an (je Veröffentlichung einmal) |
+
+`/v1/library`, `/v1/metadata`, `/v1/playlists` und `/v1/music/follows` senden ein `ETag`. Wer es als `If-None-Match` zurückschickt, bekommt bei unveränderter Antwort `304 Not Modified` ohne Inhalt.
 
 `kind` ist optional und kann `audio`, `video` oder `file` sein. Limits werden auf 1–500 begrenzt. `path` ist ein relativer, exakt im Index vorhandener Verzeichnispfad; das Wurzelverzeichnis ist die leere Zeichenfolge. Verzeichnisse werden vollständig ausgegeben, Dateien paginiert. Alle Objekte verwenden JSON mit `snake_case`.
 

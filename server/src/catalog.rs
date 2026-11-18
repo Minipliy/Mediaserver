@@ -111,6 +111,9 @@ pub struct Catalog {
     /// Best cover image per directory (directory path -> artwork ID).
     pub covers: HashMap<String, String>,
     pub scanned_at: u64,
+    /// Last scan that found added, removed or changed files. The library
+    /// answer reports this, so it stays the same (and cheap to check) between scans.
+    pub changed_at: u64,
     pub scan_errors: usize,
     /// First few entries that could not be read, for the server log.
     pub skipped: Vec<String>,

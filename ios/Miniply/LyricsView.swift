@@ -42,8 +42,8 @@ struct LyricsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                             .padding(.vertical)
-                        if source == "genius" {
-                            Text("Songtext: Genius").font(.caption2).foregroundStyle(.tertiary)
+                        if let name = ["genius": "Genius", "lyrics.ovh": "lyrics.ovh", "lrclib": "LRCLIB"][source] {
+                            Text("Songtext: \(name)").font(.caption2).foregroundStyle(.tertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -73,8 +73,8 @@ struct LyricsView: View {
                         .id(line.id)
                         .animation(.easeOut(duration: 0.25), value: active)
                     }
-                    if source == "lrclib" {
-                        Text("Songtext: LRCLIB").font(.caption2).foregroundStyle(.tertiary).padding(.top)
+                    if let name = ["lrclib": "LRCLIB", "netease": "NetEase Cloud Music"][source] {
+                        Text("Songtext: \(name)").font(.caption2).foregroundStyle(.tertiary).padding(.top)
                     }
                 }
                 .padding(.vertical, 120)

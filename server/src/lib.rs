@@ -159,7 +159,22 @@ impl AppState {
         let mut next = next;
         self.analysis.read().await.apply(&mut next);
         self.note_first_seen(&mut next).await;
-        *self.catalog.write().await = next;
+        let mut current = self.catalog.write().await;
+        let unchanged = current.changed_at > 0
+            && current.files.len() == next.files.len()
+            && next.files.iter().all(|(id, media)| {
+                current.files.get(id).is_some_and(|known| {
+                    known.modified == media.modified
+                        && known.modified_nanos == media.modified_nanos
+                        && known.bytes == media.bytes
+                })
+            });
+        next.changed_at = if unchanged {
+            current.changed_at
+        } else {
+            next.scanned_at
+        };
+        *current = next;
         Ok(())
     }
 
@@ -297,7 +312,8 @@ pub fn router(state: AppState) -> Router {
             "/v1/playlists/{id}",
             axum::routing::put(update_playlist).delete(delete_playlist),
         )
-        .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
+        .route_layer(middleware::from_fn_with_state(state.clone(), authenticate))
+        .layer(middleware::from_fn(unchanged_answers));
     Router::new()
         .merge(api)
         .route(
@@ -331,6 +347,50 @@ async fn authenticate(
         return Err(ApiError::unauthorized());
     }
     Ok(next.run(request).await)
+}
+
+/// Lists the apps fetch again and again (library, online infos, playlists,
+/// followed artists) carry a fingerprint. A client that sends it back gets
+/// "304 Not Modified" without a body when nothing changed: on mobile data a
+/// check costs a few bytes instead of megabytes.
+async fn unchanged_answers(request: Request, next: Next) -> Response {
+    const PATHS: [&str; 4] = [
+        "/v1/library",
+        "/v1/metadata",
+        "/v1/playlists",
+        "/v1/music/follows",
+    ];
+    let watched =
+        request.method() == axum::http::Method::GET && PATHS.contains(&request.uri().path());
+    let sent = request
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let response = next.run(request).await;
+    if !watched || response.status() != StatusCode::OK {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 256 * 1024 * 1024).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let digest = Sha256::digest(&bytes);
+    let tag = format!("\"{}\"", hex::encode(&digest[..16]));
+    parts.headers.insert(header::ETAG, tag.parse().unwrap());
+    // Kept on the device, but always asked about again.
+    parts
+        .headers
+        .insert(header::CACHE_CONTROL, "private, no-cache".parse().unwrap());
+    if sent
+        .as_deref()
+        .is_some_and(|sent| sent.split(',').any(|one| one.trim() == tag))
+    {
+        parts.status = StatusCode::NOT_MODIFIED;
+        parts.headers.remove(header::CONTENT_LENGTH);
+        return Response::from_parts(parts, axum::body::Body::empty());
+    }
+    Response::from_parts(parts, axum::body::Body::from(bytes))
 }
 
 async fn security_headers(request: Request, next: Next) -> Response {
@@ -408,7 +468,7 @@ async fn library(
         items: page,
         total,
         offset,
-        scanned_at: catalog.scanned_at,
+        scanned_at: catalog.changed_at,
         scan_errors: catalog.scan_errors,
     }))
 }

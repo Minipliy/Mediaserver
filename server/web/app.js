@@ -1368,7 +1368,7 @@ async function loadLyrics(track) {
       box.classList.add("plain");
       box.replaceChildren(...lyrics.plain.split(/\n{2,}/).map((part) => text("p", part)));
     } else box.replaceChildren(text("p", "Kein Songtext gefunden.", "source"));
-    const sources = { file: "Datei neben dem Song", embedded: "In der Datei", tag: "In der Datei", genius: "Genius", lrclib: "LRCLIB" };
+    const sources = { file: "Datei neben dem Song", embedded: "In der Datei", tag: "In der Datei", genius: "Genius", lrclib: "LRCLIB", netease: "NetEase Cloud Music", "lyrics.ovh": "lyrics.ovh" };
     if (lyrics.source) box.append(text("p", `Quelle: ${sources[String(lyrics.source).toLowerCase()] || lyrics.source}`, "source"));
   } catch { box.replaceChildren(text("p", "Kein Songtext gefunden.", "source")); }
 }

@@ -171,6 +171,173 @@ async fn lrclib_lyrics(
     Ok((lyrics.synced.is_some() || lyrics.plain.is_some() || instrumental).then_some(lyrics))
 }
 
+/// Letters and digits only, lower case: "God’s Plan" and "Gods Plan" match.
+fn lyrics_key(value: &str) -> String {
+    value
+        .to_lowercase()
+        .split(['(', '['])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// The same song: the title matches, the artist is one of the credits and the
+/// length (when both know it) differs by at most a few seconds.
+fn same_song(
+    title: &str,
+    artists: &str,
+    seconds: Option<f64>,
+    media: &Media,
+    artist: &str,
+) -> bool {
+    let wanted = lyrics_key(&media.title);
+    let artist = lyrics_key(artist);
+    let credits = lyrics_key(artists);
+    !wanted.is_empty()
+        && lyrics_key(title) == wanted
+        && !artist.is_empty()
+        && (credits.contains(&artist) || artist.contains(&credits) && !credits.is_empty())
+        && match (seconds, media.duration) {
+            (Some(found), Some(own)) if found > 0.0 => (found - own).abs() <= 8.0,
+            _ => true,
+        }
+}
+
+/// LRCLIB's search, when the exact lookup misses (other album name or a
+/// slightly different length). Prefers entries with time stamps.
+async fn lrclib_search(
+    state: &AppState,
+    media: &Media,
+    artist: &str,
+) -> Result<Option<Lyrics>, ()> {
+    let url = reqwest::Url::parse_with_params(
+        "https://lrclib.net/api/search",
+        &[
+            ("track_name", media.title.as_str()),
+            ("artist_name", artist),
+        ],
+    )
+    .map_err(|_| ())?;
+    let response = state.http.get(url).send().await.map_err(|_| ())?;
+    if response.status().is_server_error() || response.status().as_u16() == 429 {
+        return Err(());
+    }
+    let body: Value =
+        serde_json::from_slice(&response.bytes().await.map_err(|_| ())?).map_err(|_| ())?;
+    let text = |item: &Value, key: &str| {
+        item.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let mut matches: Vec<&Value> = body
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    same_song(
+                        item.get("trackName").and_then(Value::as_str).unwrap_or(""),
+                        item.get("artistName").and_then(Value::as_str).unwrap_or(""),
+                        item.get("duration").and_then(Value::as_f64),
+                        media,
+                        artist,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    matches.sort_by_key(|item| text(item, "syncedLyrics").is_none());
+    Ok(matches.first().and_then(|item| {
+        let lyrics = Lyrics {
+            synced: text(item, "syncedLyrics"),
+            plain: text(item, "plainLyrics"),
+            instrumental: item
+                .get("instrumental")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            source: "lrclib".into(),
+        };
+        (lyrics.synced.is_some() || lyrics.plain.is_some() || lyrics.instrumental).then_some(lyrics)
+    }))
+}
+
+/// lyrics.ovh: plain text by artist and title, a wide collection.
+async fn lyrics_ovh(state: &AppState, media: &Media, artist: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse("https://api.lyrics.ovh/v1/").ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .extend([artist, media.title.as_str()]);
+    let response = state.http.get(url).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: Value = serde_json::from_slice(&response.bytes().await.ok()?).ok()?;
+    let text = body.get("lyrics")?.as_str()?.trim();
+    // Some answers start with a "Paroles de la chanson …" line from the source site.
+    let text = match text.split_once('\n') {
+        Some((first, rest)) if first.starts_with("Paroles de la chanson") => rest.trim(),
+        _ => text,
+    };
+    (text.len() > 20).then(|| text.replace("\r\n", "\n"))
+}
+
+/// NetEase Cloud Music: time-stamped lyrics, also for songs nobody added to LRCLIB.
+async fn netease_lyrics(state: &AppState, media: &Media, artist: &str) -> Option<String> {
+    let query = format!("{artist} {}", media.title);
+    let url = reqwest::Url::parse_with_params(
+        "https://music.163.com/api/search/get",
+        &[("s", query.as_str()), ("type", "1"), ("limit", "10")],
+    )
+    .ok()?;
+    let body: Value =
+        serde_json::from_slice(&state.http.get(url).send().await.ok()?.bytes().await.ok()?).ok()?;
+    let song = body
+        .pointer("/result/songs")?
+        .as_array()?
+        .iter()
+        .find(|song| {
+            let artists: Vec<&str> = song
+                .get("artists")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|a| a.get("name").and_then(Value::as_str))
+                        .collect()
+                })
+                .unwrap_or_default();
+            same_song(
+                song.get("name").and_then(Value::as_str).unwrap_or(""),
+                &artists.join(" "),
+                song.get("duration")
+                    .and_then(Value::as_f64)
+                    .map(|ms| ms / 1000.0),
+                media,
+                artist,
+            )
+        })?;
+    let id = song.get("id")?.as_u64()?.to_string();
+    let url = reqwest::Url::parse_with_params(
+        "https://music.163.com/api/song/lyric",
+        &[("id", id.as_str()), ("lv", "1"), ("kv", "1"), ("tv", "-1")],
+    )
+    .ok()?;
+    let body: Value =
+        serde_json::from_slice(&state.http.get(url).send().await.ok()?.bytes().await.ok()?).ok()?;
+    let lyric = body.pointer("/lrc/lyric")?.as_str()?.trim();
+    // Only real time stamps count; "纯音乐" marks a piece without words.
+    let lines = lyric
+        .lines()
+        .filter(|line| {
+            line.starts_with('[') && line.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+        })
+        .count();
+    (lines >= 5 && !lyric.contains("纯音乐")).then(|| lyric.to_owned())
+}
+
 /// GET /v1/lyrics/{id}: `.lrc`/`.txt` next to the file, embedded lyrics,
 /// then (if online metadata is enabled) the text from Genius and time stamps
 /// from LRCLIB, cached in SQLite.
@@ -245,12 +412,15 @@ pub async fn lyrics(
 }
 
 fn lyrics_query(media: &Media, artist: &str) -> String {
-    format!("genius-v1\u{1f}{}\u{1f}{artist}", media.title)
+    format!("genius-v2\u{1f}{}\u{1f}{artist}", media.title)
 }
 
 fn lyrics_fresh(entry: &metadata::Entry, query: &str, current: u64) -> bool {
     let max_age = if entry.found { 365 } else { 14 } * 86_400;
-    entry.query == query && current.saturating_sub(entry.fetched_at) < max_age
+    // Lyrics found before more sources were added stay; what was not found
+    // then is looked up again with them.
+    let earlier = entry.found && entry.query == query.replacen("genius-v2", "genius-v1", 1);
+    (entry.query == query || earlier) && current.saturating_sub(entry.fetched_at) < max_age
 }
 
 /// A song without its own lyrics that has not been looked up lately.
@@ -291,17 +461,57 @@ async fn online_lyrics(state: &AppState, media: &Media, artist: &str) -> Result<
         lrclib_lyrics(state, media, artist)
     );
     let complete = genius.is_ok() && lrclib.is_ok();
-    // Genius has no time stamps: LRCLIB's stay, so the text can run along.
-    let found = match (genius.as_ref(), lrclib.as_ref()) {
-        (Ok(None), Ok(None)) => None,
-        (Err(_), Ok(None)) | (Ok(None), Err(_)) | (Err(_), Err(_)) => return Err(()),
-        _ => {
-            let text = genius.ok().flatten();
-            let mut lyrics = lrclib.ok().flatten().unwrap_or_default();
-            if lyrics.synced.is_none() {
-                lyrics.source = if text.is_some() { "genius" } else { "lrclib" }.into();
+    if genius.is_err() && lrclib.is_err() {
+        return Err(());
+    }
+    let text = genius.ok().flatten();
+    let mut lyrics = lrclib.ok().flatten();
+    // Not found exactly: LRCLIB's search, then NetEase for time stamps and
+    // lyrics.ovh for the text, so that fewer songs stay without lyrics.
+    if lyrics
+        .as_ref()
+        .is_none_or(|l| l.synced.is_none() && !l.instrumental)
+        && let Ok(Some(searched)) = lrclib_search(state, media, artist).await
+    {
+        lyrics = Some(searched);
+    }
+    if lyrics
+        .as_ref()
+        .is_none_or(|l| l.synced.is_none() && !l.instrumental)
+        && let Some(synced) = netease_lyrics(state, media, artist).await
+    {
+        let mut found = lyrics.unwrap_or_default();
+        found.synced = Some(synced);
+        found.source = "netease".into();
+        lyrics = Some(found);
+    }
+    // Plain text: Genius, else lyrics.ovh when nothing else has words.
+    let mut plain_source = text.as_ref().map(|_| "genius");
+    let mut plain = text;
+    if plain.is_none()
+        && lyrics
+            .as_ref()
+            .is_none_or(|l| l.plain.is_none() && l.synced.is_none() && !l.instrumental)
+        && let Some(found) = lyrics_ovh(state, media, artist).await
+    {
+        plain = Some(found);
+        plain_source = Some("lyrics.ovh");
+    }
+    // Genius has no time stamps: the synced lines stay, so the text can run along.
+    // The source named is the one of the time stamps, else the one of the text.
+    let found = match (lyrics, plain) {
+        (None, None) => None,
+        (lyrics, plain) => {
+            let mut lyrics = lyrics.unwrap_or_default();
+            if lyrics.synced.is_none()
+                && let Some(source) = plain_source
+            {
+                lyrics.source = source.into();
             }
-            lyrics.plain = text.or(lyrics.plain);
+            if lyrics.source.is_empty() {
+                lyrics.source = "lrclib".into();
+            }
+            lyrics.plain = plain.or(lyrics.plain);
             Some(lyrics)
         }
     };
@@ -931,6 +1141,54 @@ mod tests {
             value: Value::Null,
         };
         let now = 1_000_000_000;
+        // Found before the extra sources: kept. Not found then: looked up again.
+        let older = |found: bool| metadata::Entry {
+            query: lyrics_query(&media, "Artist").replacen("genius-v2", "genius-v1", 1),
+            found,
+            fetched_at: now - 86_400,
+            value: Value::Null,
+        };
+        assert!(!needs_lyrics(&media, Some(&older(true)), now));
+        assert!(needs_lyrics(&media, Some(&older(false)), now));
+        // Matching search results: title without extras, one of the credits, length.
+        let mut timed = media.clone();
+        timed.title = "God's Plan".into();
+        timed.duration = Some(198.9);
+        assert!(same_song(
+            "God’s Plan",
+            "Drake",
+            Some(199.0),
+            &timed,
+            "Drake"
+        ));
+        assert!(same_song(
+            "Gods Plan (Explicit)",
+            "Drake, Future",
+            None,
+            &timed,
+            "Drake"
+        ));
+        assert!(!same_song(
+            "God's Plan",
+            "Drake",
+            Some(240.0),
+            &timed,
+            "Drake"
+        ));
+        assert!(!same_song(
+            "God's Plan",
+            "Cover Band",
+            Some(199.0),
+            &timed,
+            "Drake"
+        ));
+        assert!(!same_song(
+            "Gods Plan Remix",
+            "Drake",
+            None,
+            &timed,
+            "Drake"
+        ));
         assert!(needs_lyrics(&media, None, now));
         assert!(!needs_lyrics(&media, Some(&entry(true, 100)), now));
         assert!(!needs_lyrics(&media, Some(&entry(false, 3)), now));

@@ -891,6 +891,68 @@ async fn playlists_and_progress_survive_restart() {
 }
 
 #[tokio::test]
+async fn unchanged_lists_answer_without_a_body() {
+    let f = Fixture::new().await;
+    for path in ["/v1/library?offset=0&limit=500", "/v1/playlists"] {
+        let (status, headers, body) = f.call("GET", path, true, None, &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!body.is_empty());
+        let tag = headers["etag"].to_str().unwrap().to_owned();
+        assert_eq!(headers["cache-control"], "private, no-cache");
+        let (status, headers, body) = f
+            .call("GET", path, true, None, &[("If-None-Match", &tag)])
+            .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{path}");
+        assert!(body.is_empty());
+        assert_eq!(headers["etag"].to_str().unwrap(), tag);
+    }
+    // A new scan without new files keeps the library's fingerprint.
+    let path = "/v1/library?offset=0&limit=500";
+    let (_, headers, _) = f.call("GET", path, true, None, &[]).await;
+    let library = headers["etag"].to_str().unwrap().to_owned();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    f.call("POST", "/v1/scan", true, None, &[]).await;
+    let (status, _, _) = f
+        .call("GET", path, true, None, &[("If-None-Match", &library)])
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED, "a scan without changes");
+    // A change gives a new fingerprint and the full answer again.
+    let (_, headers, _) = f.call("GET", "/v1/playlists", true, None, &[]).await;
+    let before = headers["etag"].to_str().unwrap().to_owned();
+    f.call(
+        "POST",
+        "/v1/playlists",
+        true,
+        Some(json!({"name": "Neu", "media_ids": []})),
+        &[],
+    )
+    .await;
+    let (status, headers, body) = f
+        .call(
+            "GET",
+            "/v1/playlists",
+            true,
+            None,
+            &[("If-None-Match", &before)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(headers["etag"].to_str().unwrap(), before);
+    assert!(!body.is_empty());
+    // Without a token there is no fingerprint to compare against.
+    let (status, _, _) = f
+        .call(
+            "GET",
+            "/v1/playlists",
+            false,
+            None,
+            &[("If-None-Match", &before)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn newest_position_wins_even_when_sent_late() {
     let f = Fixture::new().await;
     let id = f.id("video").await;

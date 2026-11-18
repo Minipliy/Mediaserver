@@ -34,6 +34,30 @@ private final class ProgressProtocol: URLProtocol {
     }
 }
 
+/// A server that answers playlists with a fingerprint and "304" when it matches.
+private final class FingerprintProtocol: URLProtocol {
+    nonisolated(unsafe) static var bodies = 0
+    nonisolated(unsafe) static var notModified = 0
+    nonisolated(unsafe) static var tag = "\"v1\""
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "fingerprint-regression.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let matches = request.value(forHTTPHeaderField: "If-None-Match") == Self.tag
+        let status = matches ? 304 : 200
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["ETag": Self.tag])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if matches { Self.notModified += 1 } else {
+            Self.bodies += 1
+            client?.urlProtocol(self, didLoad: Data(#"[{"id":"p","name":"Liste \#(Self.tag.count)","media_ids":[]}]"#.utf8))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private struct PlaylistWire: Decodable { let id: String; let name: String }
+
 @main
 private struct APIRegression {
     static func main() async throws {
@@ -49,6 +73,21 @@ private struct APIRegression {
             guard value else { fatalError(message) }
             print("PASS " + message)
         }
+        // Unchanged lists come from the device after a "304"; a change loads again.
+        let fingerprintConfiguration = URLSessionConfiguration.ephemeral
+        fingerprintConfiguration.protocolClasses = [FingerprintProtocol.self]
+        let fingerprintAPI = API(Connection(baseURL: URL(string: "https://fingerprint-regression.invalid")!, token: "regression-token"),
+                                 configuration: fingerprintConfiguration)
+        AnswerStore.shared.forget(URL(string: "https://fingerprint-regression.invalid/v1/playlists")!)
+        let first: [PlaylistWire] = try await fingerprintAPI.get("/v1/playlists")
+        let second: [PlaylistWire] = try await fingerprintAPI.get("/v1/playlists")
+        expect(first.first?.id == "p" && second.first?.id == "p" && FingerprintProtocol.bodies == 1 && FingerprintProtocol.notModified == 1,
+               "An unchanged list is answered with 304 and read from the device")
+        FingerprintProtocol.tag = "\"v2-changed\""
+        let third: [PlaylistWire] = try await fingerprintAPI.get("/v1/playlists")
+        expect(FingerprintProtocol.bodies == 2 && third.first?.name == "Liste 12", "A changed list is loaded again")
+        AnswerStore.shared.forget(URL(string: "https://fingerprint-regression.invalid/v1/playlists")!)
+
         let quickStart = Date()
         let quick = await api.playbackProgress(media("quick"))
         expect(quick?.seconds == 42 && Date().timeIntervalSince(quickStart) < 1,
